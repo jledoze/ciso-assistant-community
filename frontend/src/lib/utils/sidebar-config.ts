@@ -2,6 +2,7 @@ type SidebarBackendKeys = {
 	xrays: boolean;
 	incidents: boolean;
 	tasks: boolean;
+	control_plan: boolean;
 	risk_acceptances: boolean;
 	exceptions: boolean;
 	follow_up: boolean;
@@ -31,12 +32,15 @@ type SidebarBackendKeys = {
 	advanced_analytics: boolean;
 	journeys: boolean;
 	policy_documents: boolean;
+	security_advisories: boolean;
+	cwes: boolean;
 };
 
 type SidebarFrontendKeys = {
 	xRays: boolean;
 	incidents: boolean;
 	tasks: boolean;
+	tasksReview: boolean;
 	riskAcceptances: boolean;
 	securityExceptions: boolean;
 	followUp: boolean;
@@ -64,6 +68,8 @@ type SidebarFrontendKeys = {
 	dataBreaches: boolean;
 	auditDashboard: boolean;
 	presets: boolean;
+	securityAdvisories: boolean;
+	cwes: boolean;
 };
 
 export function getSidebarVisibleItems(
@@ -73,6 +79,7 @@ export function getSidebarVisibleItems(
 		xRays: featureFlags?.xrays ?? false,
 		incidents: featureFlags?.incidents ?? false,
 		tasks: featureFlags?.tasks ?? false,
+		tasksReview: featureFlags?.control_plan ?? true,
 		riskAcceptances: featureFlags?.risk_acceptances ?? false,
 		securityExceptions: featureFlags?.exceptions ?? false,
 		followUp: featureFlags?.follow_up ?? false,
@@ -99,6 +106,8 @@ export function getSidebarVisibleItems(
 		rightRequests: featureFlags?.right_requests ?? true,
 		dataBreaches: featureFlags?.data_breaches ?? true,
 		auditDashboard: featureFlags?.auditee_mode ?? false,
-		presets: featureFlags?.journeys ?? true
+		presets: featureFlags?.journeys ?? true,
+		securityAdvisories: featureFlags?.security_advisories ?? true,
+		cwes: featureFlags?.cwes ?? true
 	};
 }

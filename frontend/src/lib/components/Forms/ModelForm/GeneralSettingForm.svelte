@@ -1,12 +1,15 @@
 <script lang="ts">
 	import Select from '../Select.svelte';
 	import NumberField from '../NumberField.svelte';
+	import TextField from '../TextField.svelte';
+	import TextArea from '../TextArea.svelte';
 	import { m } from '$paraglide/messages';
 	import type { CacheLock, ModelInfo } from '$lib/utils/types';
 	import type { SuperForm } from 'sveltekit-superforms';
 	import { Accordion } from '@skeletonlabs/skeleton-svelte';
 	import Checkbox from '$lib/components/Forms/Checkbox.svelte';
 	import RadioGroup from '../RadioGroup.svelte';
+	import { page } from '$app/stores';
 	import { safeTranslate } from '$lib/utils/i18n';
 	import { LOCALE_MAP, language, defaultLangLabels } from '$lib/utils/locales';
 	import { setLocale } from '$paraglide/runtime';
@@ -26,6 +29,26 @@
 	const formStore = form.form;
 	const modalStore = getModalStore();
 	const toastStore = getToastStore();
+
+	let ollamaModels = $state<{ label: string; value: string }[]>([]);
+	let ollamaModelsLoading = $state(false);
+
+	async function fetchOllamaModels() {
+		ollamaModelsLoading = true;
+		try {
+			const res = await fetch('/fe-api/chat/ollama-models');
+			if (res.ok) {
+				const data = await res.json();
+				ollamaModels = (data.models || []).map((m: { name: string }) => ({
+					label: m.name,
+					value: m.name
+				}));
+			}
+		} catch {
+			// Ollama not reachable — leave empty, text field fallback
+		}
+		ollamaModelsLoading = false;
+	}
 
 	let flipVertically = $derived(formDataCache['risk_matrix_flip_vertical'] ?? false);
 
@@ -232,6 +255,40 @@
 			</div>
 		</Accordion.ItemContent>
 	</Accordion.Item>
+	{#if $page.data.featureflags?.audit_tree_inheritance}
+		<Accordion.Item value="audits">
+			<Accordion.ItemTrigger class="flex w-full items-center cursor-pointer">
+				<i class="fa-solid fa-list-check mr-2"></i><span class="flex-1 text-left"
+					>{m.complianceAssessments()}</span
+				>
+				<Accordion.ItemIndicator
+					class="transition-transform duration-200 data-[state=open]:rotate-0 data-[state=closed]:-rotate-90"
+					><svg xmlns="http://www.w3.org/2000/svg" width="14px" height="14px" viewBox="0 0 448 512"
+						><path
+							d="M201.4 374.6c12.5 12.5 32.8 12.5 45.3 0l160-160c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L224 306.7 86.6 169.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l160 160z"
+						/></svg
+					></Accordion.ItemIndicator
+				>
+			</Accordion.ItemTrigger>
+			<Accordion.ItemContent>
+				<div class="p-4">
+					<Select
+						{form}
+						field="audit_tree_aggregation_strategy"
+						options={[
+							{ label: m.auditTreeAggregationNone(), value: 'none' },
+							{ label: m.auditTreeAggregationParentWins(), value: 'parent_wins' },
+							{ label: m.auditTreeAggregationChildWins(), value: 'child_wins' },
+							{ label: m.auditTreeAggregationBestCase(), value: 'best_case' },
+							{ label: m.auditTreeAggregationWorstCase(), value: 'worst_case' }
+						]}
+						label={m.auditTreeAggregationStrategy()}
+						helpText={m.auditTreeAggregationStrategyHelpText()}
+					/>
+				</div>
+			</Accordion.ItemContent>
+		</Accordion.Item>
+	{/if}
 	<Accordion.Item value="riskMatrix">
 		<Accordion.ItemTrigger class="flex w-full items-center cursor-pointer">
 			<i class="fa-solid fa-table-cells-large mr-2"></i><span class="flex-1 text-left"
@@ -398,7 +455,8 @@
 						{ label: 'Polish Złoty (PLN)', value: 'PLN' },
 						{ label: 'Taiwan Dollar (NT$)', value: 'NT$' },
 						{ label: 'Thai Baht (฿)', value: '฿' },
-						{ label: 'Malaysian Ringgit (MYR)', value: 'MYR' }
+						{ label: 'Malaysian Ringgit (MYR)', value: 'MYR' },
+						{ label: 'CFP Franc (XPF)', value: 'XPF' }
 					]}
 					label={m.currency()}
 					helpText={m.currencyHelpText()}
@@ -499,6 +557,139 @@
 			</div>
 		</Accordion.ItemContent>
 	</Accordion.Item>
+	{#if $page.data.featureflags?.chat_mode !== undefined}
+		<Accordion.Item value="chatAi">
+			<Accordion.ItemTrigger
+				class="flex w-full items-center cursor-pointer"
+				onclick={fetchOllamaModels}
+			>
+				<i class="fa-solid fa-robot mr-2"></i><span class="flex-1 text-left"
+					>{m.chatAiSettings()}</span
+				>
+				<Accordion.ItemIndicator
+					class="transition-transform duration-200 data-[state=open]:rotate-0 data-[state=closed]:-rotate-90"
+					><svg xmlns="http://www.w3.org/2000/svg" width="14px" height="14px" viewBox="0 0 448 512"
+						><path
+							d="M201.4 374.6c12.5 12.5 32.8 12.5 45.3 0l160-160c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L224 306.7 86.6 169.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l160 160z"
+						/></svg
+					></Accordion.ItemIndicator
+				>
+			</Accordion.ItemTrigger>
+			<Accordion.ItemContent>
+				<div class="p-4 space-y-4">
+					<Select
+						{form}
+						field="llm_provider"
+						options={[
+							{ label: 'Ollama', value: 'ollama' },
+							{
+								label: 'OpenAI-compatible (LM Studio, vLLM, llama.cpp...)',
+								value: 'openai_compatible'
+							}
+						]}
+						label={m.llmProvider()}
+						helpText={m.llmProviderHelpText()}
+					/>
+					{#if $formStore.llm_provider === 'openai_compatible'}
+						<TextField
+							{form}
+							field="openai_api_base"
+							label={m.openaiApiBase()}
+							helpText={m.openaiApiBaseHelpText()}
+						/>
+						<TextField
+							{form}
+							field="openai_model"
+							label={m.openaiModel()}
+							helpText={m.openaiModelHelpText()}
+						/>
+						<TextField
+							{form}
+							field="openai_api_key"
+							label={m.openaiApiKey()}
+							helpText={m.openaiApiKeyHelpText()}
+							type="password"
+						/>
+					{:else}
+						<TextField
+							{form}
+							field="ollama_base_url"
+							label={m.ollamaBaseUrl()}
+							helpText={m.ollamaBaseUrlHelpText()}
+						/>
+						{#if ollamaModels.length > 0}
+							<Select
+								{form}
+								field="ollama_model"
+								options={ollamaModels}
+								label={m.ollamaModel()}
+								helpText={m.ollamaModelHelpText()}
+								translateOptions={false}
+							/>
+							<Select
+								{form}
+								field="ollama_embed_model"
+								options={ollamaModels}
+								label={m.ollamaEmbedModel()}
+								helpText={m.ollamaEmbedModelHelpText()}
+								translateOptions={false}
+							/>
+						{:else}
+							<TextField
+								{form}
+								field="ollama_model"
+								label={m.ollamaModel()}
+								helpText={ollamaModelsLoading
+									? 'Loading models from Ollama...'
+									: m.ollamaModelHelpText()}
+							/>
+							<TextField
+								{form}
+								field="ollama_embed_model"
+								label={m.ollamaEmbedModel()}
+								helpText={ollamaModelsLoading
+									? 'Loading models from Ollama...'
+									: m.ollamaEmbedModelHelpText()}
+							/>
+						{/if}
+					{/if}
+					<Select
+						{form}
+						field="embedding_backend"
+						options={[
+							{ label: 'Sentence Transformers (local)', value: 'sentence-transformers' },
+							{ label: 'Ollama', value: 'ollama' }
+						]}
+						label={m.embeddingBackend()}
+						helpText={m.embeddingBackendHelpText()}
+					/>
+					<TextArea
+						{form}
+						field="chat_system_prompt"
+						label={m.chatSystemPrompt()}
+						helpText={m.chatSystemPromptHelpText()}
+					/>
+					<Checkbox
+						{form}
+						field="chat_temperature_enabled"
+						label={m.chatTemperatureEnabled()}
+						helpText={m.chatTemperatureEnabledHelpText()}
+					/>
+					{#if $formStore.chat_temperature_enabled}
+						<NumberField
+							{form}
+							field="chat_temperature"
+							label={m.chatTemperature()}
+							helpText={m.chatTemperatureHelpText()}
+							min={0}
+							max={2}
+							step={0.1}
+						/>
+					{/if}
+				</div>
+			</Accordion.ItemContent>
+		</Accordion.Item>
+	{/if}
 	<Accordion.Item value="assignments">
 		<Accordion.ItemTrigger class="flex w-full items-center cursor-pointer">
 			<i class="fa-solid fa-clipboard-user mr-2"></i><span class="flex-1 text-left"

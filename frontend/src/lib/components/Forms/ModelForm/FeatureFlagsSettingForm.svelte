@@ -28,6 +28,22 @@
 			].filter(({ field }) => Object.keys(page.data.featureFlagSettings).includes(field))
 		},
 		{
+			category: m.catalog(),
+			description: m.CatalogDescription(),
+			fields: [
+				{
+					field: 'security_advisories',
+					label: m.securityAdvisories(),
+					description: m.securityAdvisoriesDescription()
+				},
+				{
+					field: 'cwes',
+					label: m.cwe(),
+					description: m.cweDescription()
+				}
+			].filter(({ field }) => Object.keys(page.data.featureFlagSettings).includes(field))
+		},
+		{
 			category: m.operations(),
 			description: m.operationsDescription(),
 			fields: [
@@ -35,6 +51,11 @@
 					field: 'tasks',
 					label: m.tasks(),
 					description: m.taskTemplatesDescription()
+				},
+				{
+					field: 'control_plan',
+					label: m.tasksReview(),
+					description: m.controlPlanDescription()
 				},
 				{
 					field: 'xrays',
@@ -157,6 +178,11 @@
 					field: 'advanced_analytics',
 					label: m.advancedAnalytics(),
 					description: m.advancedAnalyticsDescription()
+				},
+				{
+					field: 'audit_tree_inheritance',
+					label: m.auditTreeInheritance(),
+					description: m.auditTreeInheritanceDescription()
 				}
 			].filter(({ field }) => Object.keys(page.data.featureFlagSettings).includes(field))
 		},
@@ -224,6 +250,11 @@
 					field: 'experimental',
 					label: m.experimental(),
 					description: m.experimentalFeatures()
+				},
+				{
+					field: 'chat_mode',
+					label: m.chatMode(),
+					description: m.chatModeDescription()
 				}
 			].filter(({ field }) => Object.keys(page.data.featureFlagSettings).includes(field))
 		}

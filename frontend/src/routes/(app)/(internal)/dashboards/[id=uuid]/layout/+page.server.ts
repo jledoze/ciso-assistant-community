@@ -6,7 +6,7 @@ import type { PageServerLoad } from './$types';
 import { type Actions, fail } from '@sveltejs/kit';
 import { nestedDeleteFormAction, nestedWriteFormAction } from '$lib/utils/actions';
 import { superValidate } from 'sveltekit-superforms';
-import { zod } from 'sveltekit-superforms/adapters';
+import { zod4 as zod } from 'sveltekit-superforms/adapters';
 
 export const load: PageServerLoad = async (event) => {
 	event.depends('dashboard:widgets');
@@ -53,7 +53,7 @@ export const load: PageServerLoad = async (event) => {
 			position_y: firstFreeRow,
 			// Set text widget specific defaults
 			chart_type: 'text',
-			time_range: 'all_time',
+			time_range: 'last_30_days',
 			aggregation: 'none',
 			show_target: false,
 			show_legend: false,
@@ -71,7 +71,7 @@ export const load: PageServerLoad = async (event) => {
 			dashboard: event.params.id,
 			folder: detailData.data.folder?.id || detailData.data.folder,
 			position_y: firstFreeRow,
-			time_range: 'all_time',
+			time_range: 'last_30_days',
 			aggregation: 'none',
 			show_target: false
 		},

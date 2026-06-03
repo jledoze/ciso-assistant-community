@@ -5,11 +5,12 @@
 	import { goto as _goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import TableRowActions from '$lib/components/TableRowActions/TableRowActions.svelte';
+	import { booleanDisplay } from '$lib/utils/boolean-display';
 	import { ISO_8601_REGEX } from '$lib/utils/constants';
 	import { CUSTOM_ACTIONS_COMPONENT, getFieldComponentMap, URL_MODEL_MAP } from '$lib/utils/crud';
 	import { safeTranslate, unsafeTranslate } from '$lib/utils/i18n';
 	import { toCamelCase } from '$lib/utils/locales.js';
-	import { onMount } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 
 	import { tableA11y } from '$lib/components/ModelTable/actions';
 	// Types
@@ -23,6 +24,7 @@
 	import { formatDateOrDateTime } from '$lib/utils/datetime';
 	import { isDark } from '$lib/utils/helpers';
 	import { contextMenuActions, listViewFields, getBatchActions } from '$lib/utils/table';
+	import { tableFilterStates } from '$lib/utils/stores';
 	import BatchActionBar from './BatchActionBar.svelte';
 	import type { urlModel } from '$lib/utils/types.js';
 	import { countMasked, isMaskedPlaceholder } from '$lib/utils/related-visibility';
@@ -31,8 +33,9 @@
 	import type { SvelteEvent } from '@skeletonlabs/skeleton-svelte';
 	import { DataHandler, type State } from '@vincjo/datatables/remote';
 	import { defaults, superForm, type SuperValidated } from 'sveltekit-superforms';
-	import { zod } from 'sveltekit-superforms/adapters';
-	import { z, type AnyZodObject } from 'zod';
+	import { zod4 as zod } from 'sveltekit-superforms/adapters';
+	import { z } from 'zod';
+	import type { FormDataShape } from '$lib/utils/schemas';
 	import { loadTableData } from './handler';
 	import Pagination from './Pagination.svelte';
 	import RowCount from './RowCount.svelte';
@@ -81,7 +84,7 @@
 		disableDelete?: boolean;
 		disableView?: boolean;
 		identifierField?: string;
-		deleteForm?: SuperValidated<AnyZodObject>;
+		deleteForm?: SuperValidated<FormDataShape>;
 		URLModel?: urlModel;
 		baseEndpoint?: string;
 		detailQueryParameter?: string;
@@ -306,12 +309,25 @@
 
 	const filters = source?.filters ?? tableFilters;
 	const filteredFields = Object.keys(filters);
+	// Only persist filters on standalone list pages, not embedded sub-tables
+	const isStandaloneTable = baseEndpoint === `/${URLModel}`;
+	const filterStoreKey = `${page.url.pathname}::${baseEndpoint}`;
+	const storedFilters = isStandaloneTable ? ($tableFilterStates[filterStoreKey] ?? {}) : {};
+	// Check if any filter-related URL params exist
+	const hasUrlFilterParams = filteredFields.some(
+		(field) => page.url.searchParams.getAll(field).length > 0
+	);
 	const filterValues: { [key: string]: any } = $state(
 		Object.fromEntries(
 			filteredFields.map((field: string) => {
 				const urlValues = page.url.searchParams.getAll(field).map((value) => ({ value }));
+				if (urlValues.length > 0) return [field, urlValues];
+				// Restore persisted filters only when no URL filter params exist at all
+				if (!hasUrlFilterParams && field in storedFilters) {
+					return [field, storedFilters[field] ?? []];
+				}
 				const defaultValue = defaultFilters[field] || [];
-				return [field, urlValues.length > 0 ? urlValues : defaultValue];
+				return [field, defaultValue];
 			})
 		)
 	);
@@ -335,14 +351,26 @@
 			if (finalFilterValue) {
 				finalFilterValue.forEach(({ value }) => page.url.searchParams.append(field, value));
 			}
-
-			const hrefPattern = new RegExp(`^/${URLModel}(\\?.*)?$`);
-			const fullPath = page.url.pathname + page.url.search;
-			if (hrefPattern.test(fullPath)) {
-				breadcrumbs.updateCrumb(hrefPattern, { href: fullPath });
-			}
 		}
 		history.replaceState(history.state, '', page.url.pathname + page.url.search);
+		// Sync the current crumb's href with the new filter query.
+		breadcrumbs.update((crumbs) => {
+			if (crumbs.length < 2) return crumbs;
+			const last = crumbs[crumbs.length - 1];
+			const lastPath = last.href?.split('?')[0];
+			if (lastPath !== page.url.pathname) return crumbs;
+			const newHref = page.url.pathname + page.url.search;
+			if (last.href === newHref) return crumbs;
+			const next = crumbs.slice();
+			next[next.length - 1] = { ...last, href: newHref };
+			return next;
+		});
+		// untracked so resetFilters can delete the entry without retriggering us
+		if (isStandaloneTable) {
+			untrack(() => {
+				$tableFilterStates[filterStoreKey] = { ...filterValues };
+			});
+		}
 		setTimeout(() => {
 			handler.invalidate();
 		}, 10);
@@ -513,6 +541,27 @@
 		filteredFields?.reduce((acc, field) => acc + filterValues?.[field]?.length, 0)
 	);
 
+	async function resetFilters() {
+		for (const field of filteredFields) {
+			const defaultValue = defaultFilters[field] ?? [];
+			filterValues[field] = Array.isArray(defaultValue)
+				? defaultValue.map((v: { value: string }) => ({ ...v }))
+				: [];
+		}
+		_form.form.update((data) => {
+			for (const field of filteredFields) {
+				const dv = defaultFilters[field];
+				data[field] = Array.isArray(dv) ? dv.map((v: any) => v.value ?? v) : [];
+			}
+			return data;
+		});
+		if (!isStandaloneTable) return;
+		await tick();
+		const next = { ...$tableFilterStates };
+		delete next[filterStoreKey];
+		$tableFilterStates = next;
+	}
+
 	let classesHexBackgroundText = $derived((backgroundHexColor: string) => {
 		return isDark(backgroundHexColor) ? 'text-white' : '';
 	});
@@ -544,6 +593,7 @@
 	// Helper function to convert linked_models snake_case to camelCase for translation
 	const convertLinkedModelName = (snakeCaseName: string): string => {
 		const mapping: Record<string, string> = {
+			// Validation flows
 			compliance_assessments: 'complianceAssessments',
 			risk_assessments: 'riskAssessments',
 			business_impact_analysis: 'businessImpactAnalysis',
@@ -553,7 +603,22 @@
 			findings_assessments: 'findingsAssessments',
 			evidences: 'evidences',
 			security_exceptions: 'securityExceptions',
-			policies: 'policies'
+			policies: 'policies',
+			// Applied controls
+			requirement_assessments: 'requirementAssessments',
+			risk_scenarios: 'riskScenarios',
+			risk_scenarios_e: 'riskScenariosExisting',
+			findings: 'findings',
+			vulnerabilities: 'vulnerabilities',
+			stakeholders: 'stakeholders',
+			processings: 'processings',
+			data_breaches_remediated: 'dataBreaches',
+			quantitative_risk_hypotheses_existing: 'crqHypothesesExisting',
+			quantitative_risk_hypotheses_added: 'crqHypothesesAdded',
+			quantitative_risk_hypotheses_removed: 'crqHypothesesRemoved',
+			assetassessment: 'assetAssessments',
+			task_templates: 'taskTemplates',
+			comments: 'comments'
 		};
 		return mapping[snakeCaseName] || snakeCaseName;
 	};
@@ -661,7 +726,7 @@
 												onChange={(value) => {
 													const arrayValue = Array.isArray(value) ? value : [value];
 													const sanitizedArrayValue = arrayValue.filter(
-														(v) => v !== null && v !== undefined
+														(v) => v !== null && v !== undefined && v !== ''
 													);
 
 													filterValues[field] = sanitizedArrayValue.map((v) => ({ value: v }));
@@ -669,6 +734,21 @@
 											/>
 										{/if}
 									{/each}
+									{#if filterCount > 0}
+										<div class="flex justify-end pt-1">
+											<button
+												type="button"
+												class="btn preset-tonal-surface text-sm"
+												onclick={() => {
+													resetFilters();
+													openState = false;
+												}}
+											>
+												<i class="fa-solid fa-rotate-left mr-2"></i>
+												{m.resetFilters()}
+											</button>
+										</div>
+									{/if}
 								{/snippet}
 							</SuperForm>
 						</Popover.Content>
@@ -901,10 +981,16 @@
 														{:else if ISO_8601_REGEX.test(value) && (key === 'created_at' || key === 'updated_at' || key === 'start_date' || key === 'expiry_date' || key === 'expiration_date' || key === 'accepted_at' || key === 'rejected_at' || key === 'revoked_at' || key === 'eta' || key === 'due_date' || key === 'timestamp' || key === 'reported_at' || key === 'discovered_on')}
 															{formatDateOrDateTime(value, getLocale())}
 														{:else if [true, false].includes(value)}
-															<span class="ml-4">{safeTranslate(value ?? '-')}</span>
+															{@const bd = booleanDisplay(value, key, URLModel)}
+															<span class="ml-4"><i class="{bd.icon} {bd.colorClass}"></i></span>
+														{:else if value === 'YES' || value === 'NO'}
+															{@const bd = booleanDisplay(value === 'YES', key, URLModel)}
+															<span class="ml-4"><i class="{bd.icon} {bd.colorClass}"></i></span>
 														{:else if key === 'progress' || key === 'treatment_progress'}
 															<span class="ml-9"
-																>{safeTranslate('percentageDisplay', { number: value })}</span
+																>{value != null
+																	? safeTranslate('percentageDisplay', { number: value })
+																	: '--'}</span
 															>
 														{:else if key === 'translations'}
 															{#if Object.keys(value).length > 0}

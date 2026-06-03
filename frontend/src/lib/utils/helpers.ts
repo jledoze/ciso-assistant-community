@@ -24,9 +24,15 @@ export function getRequirementTitle(ref_id: string, name: string) {
 	return title;
 }
 
-export function displayScoreColor(value: number | null, max_score: number, inversedColors = false) {
-	value ??= 0;
-	value = (value * 100) / max_score;
+export function displayScoreColor(
+	value: number | null,
+	max_score: number,
+	inversedColors = false,
+	min_score = 0
+) {
+	value ??= min_score;
+	const range = max_score - min_score;
+	value = range > 0 ? ((value - min_score) * 100) / range : 0;
 	if (inversedColors) {
 		if (value < 25) {
 			return 'stroke-green-300';
@@ -52,9 +58,15 @@ export function displayScoreColor(value: number | null, max_score: number, inver
 	}
 }
 
-export function getScoreHexColor(value: number | null, max_score: number, inversedColors = false) {
-	value ??= 0;
-	const percentage = max_score > 0 ? (value * 100) / max_score : 0;
+export function getScoreHexColor(
+	value: number | null,
+	max_score: number,
+	inversedColors = false,
+	min_score = 0
+) {
+	value ??= min_score;
+	const range = max_score - min_score;
+	const percentage = range > 0 ? ((value - min_score) * 100) / range : 0;
 	// Tailwind color hex equivalents
 	const colors = {
 		red400: '#f87171',
@@ -75,13 +87,22 @@ export function getScoreHexColor(value: number | null, max_score: number, invers
 	}
 }
 
-export function formatScoreValue(value: number, max_score: number, fullDonut = false) {
+export function formatScoreValue(
+	value: number,
+	max_score: number,
+	fullDonut = false,
+	min_score = 0
+) {
 	if (value === null) {
 		return 0;
 	} else if (fullDonut) {
 		return 100;
 	}
-	return (value * 100) / max_score;
+	const range = max_score - min_score;
+	if (range <= 0) {
+		return 0;
+	}
+	return ((value - min_score) * 100) / range;
 }
 
 export function getSecureRedirect(url: any): string {
@@ -111,7 +132,8 @@ export function stringify(value: string | number | boolean | null = null) {
 		.replace(/[\u0300-\u036f]/g, '');
 }
 
-export function isDark(hexcolor: string): boolean {
+export function isDark(hexcolor: string | undefined): boolean {
+	if (!hexcolor) return false;
 	const r = parseInt(hexcolor.slice(1, 3), 16);
 	const g = parseInt(hexcolor.slice(3, 5), 16);
 	const b = parseInt(hexcolor.slice(5, 7), 16);
@@ -236,8 +258,16 @@ export function computeRequirementScoreAndResult(requirementAssessment: any, ans
 	if (!questions) return { score: null, result: null };
 
 	let totalScore: number | null = 0;
-	const min_score = requirementAssessment.compliance_assessment.min_score || 0;
-	const max_score = requirementAssessment.compliance_assessment.max_score || 100;
+	// Use the effective scale from the cascade so per-requirement overrides
+	// clamp the preview to the same range the backend will persist to.
+	const min_score =
+		requirementAssessment.effective_min_score ??
+		requirementAssessment.compliance_assessment.min_score ??
+		0;
+	const max_score =
+		requirementAssessment.effective_max_score ??
+		requirementAssessment.compliance_assessment.max_score ??
+		100;
 	let results: boolean[] | null = [];
 	let visibleCount = 0;
 	let answeredVisibleCount = 0;
@@ -333,4 +363,210 @@ export function computeRequirementScoreAndResult(requirementAssessment: any, ans
 	}
 
 	return { score: totalScore, result };
+}
+
+/**
+ * Field names that the CA-level visibility editor knows about.
+ * The audit's `field_visibility` is the single source of truth at runtime.
+ *
+ * Storage shape: {fieldName: {role: 'edit' | 'read' | 'hidden'}}.
+ * Roles known today: 'auditor', 'respondent'. A missing field key — or a
+ * missing role within the pair — resolves to 'edit'.
+ */
+// Order matches the rendering sequence in the respondent (auditee) view.
+export const VISIBILITY_FIELDS = [
+	'answers',
+	'respondent_alignment',
+	'status',
+	'result',
+	'extended_result',
+	'score',
+	'documentation_score',
+	'applied_controls',
+	'evidences',
+	'observation',
+	'comments'
+] as const;
+
+export type VisibilityField = (typeof VISIBILITY_FIELDS)[number];
+
+export type RoleAccess = 'edit' | 'read' | 'hidden';
+export type VisibilityPair = { auditor: RoleAccess; respondent: RoleAccess };
+
+const EDIT_PAIR: VisibilityPair = { auditor: 'edit', respondent: 'edit' };
+
+/** Return the per-role visibility pair for a field. Missing → all roles edit. */
+export function resolveFieldVisibility(
+	complianceAssessment: Record<string, any> | null | undefined,
+	fieldName: string
+): VisibilityPair {
+	const raw = complianceAssessment?.field_visibility?.[fieldName];
+	if (!raw || typeof raw !== 'object') return { ...EDIT_PAIR };
+	return {
+		auditor: (raw.auditor as RoleAccess) ?? 'edit',
+		respondent: (raw.respondent as RoleAccess) ?? 'edit'
+	};
+}
+
+function roleAccess(
+	complianceAssessment: Record<string, any> | null | undefined,
+	fieldName: string,
+	role: 'auditor' | 'respondent'
+): RoleAccess {
+	return resolveFieldVisibility(complianceAssessment, fieldName)[role];
+}
+
+/** Whether a field is readable by the given role. */
+export function isFieldVisible(
+	complianceAssessment: Record<string, any> | null | undefined,
+	fieldName: string,
+	viewerRole: 'respondent' | 'auditor' = 'auditor'
+): boolean {
+	return roleAccess(complianceAssessment, fieldName, viewerRole) !== 'hidden';
+}
+
+/** Whether a field is writable by the given role. */
+export function isFieldEditable(
+	complianceAssessment: Record<string, any> | null | undefined,
+	fieldName: string,
+	viewerRole: 'respondent' | 'auditor' = 'auditor'
+): boolean {
+	return roleAccess(complianceAssessment, fieldName, viewerRole) === 'edit';
+}
+
+/**
+ * Return visibility flags for all standard assessment fields at once.
+ */
+export function getFieldVisibility(
+	complianceAssessment: Record<string, any> | null | undefined,
+	viewerRole: 'respondent' | 'auditor' = 'auditor'
+): {
+	showAnswers: boolean;
+	showResult: boolean;
+	showStatus: boolean;
+	showScore: boolean;
+	showDocumentationScore: boolean;
+	showObservation: boolean;
+	showAppliedControls: boolean;
+	showEvidences: boolean;
+	showRespondentAlignment: boolean;
+	showComments: boolean;
+	showExtendedResult: boolean;
+} {
+	return {
+		showAnswers: isFieldVisible(complianceAssessment, 'answers', viewerRole),
+		showResult: isFieldVisible(complianceAssessment, 'result', viewerRole),
+		showStatus: isFieldVisible(complianceAssessment, 'status', viewerRole),
+		showScore: isFieldVisible(complianceAssessment, 'score', viewerRole),
+		showDocumentationScore: isFieldVisible(complianceAssessment, 'documentation_score', viewerRole),
+		showObservation: isFieldVisible(complianceAssessment, 'observation', viewerRole),
+		showAppliedControls: isFieldVisible(complianceAssessment, 'applied_controls', viewerRole),
+		showEvidences: isFieldVisible(complianceAssessment, 'evidences', viewerRole),
+		showRespondentAlignment: isFieldVisible(
+			complianceAssessment,
+			'respondent_alignment',
+			viewerRole
+		),
+		showComments: isFieldVisible(complianceAssessment, 'comments', viewerRole),
+		showExtendedResult: isFieldVisible(complianceAssessment, 'extended_result', viewerRole)
+	};
+}
+
+/**
+ * Check whether any question in a questions object has choices with `compute_result` defined.
+ */
+export function hasComputedResult(questions: Record<string, any> | null | undefined): boolean {
+	if (!questions) return false;
+	return Object.values(questions).some(
+		(question: any) =>
+			Array.isArray(question.choices) &&
+			question.choices.some((choice: any) => choice.compute_result !== undefined)
+	);
+}
+
+/**
+ * Check whether any question in a questions object has choices with `add_score` defined.
+ */
+export function hasComputedScore(questions: Record<string, any> | null | undefined): boolean {
+	if (!questions) return false;
+	return Object.values(questions).some(
+		(question: any) =>
+			Array.isArray(question.choices) &&
+			question.choices.some((choice: any) => choice.add_score !== undefined)
+	);
+}
+
+// --- Auto-alignment question for respondent mode ---
+
+export const AUTO_ALIGNMENT_QUESTION_URN = 'auto:alignment';
+
+const AUTO_CHOICES = [
+	{ id: 'yes', urn: 'auto:alignment:choice:yes', color: '#22c55e' },
+	{ id: 'no', urn: 'auto:alignment:choice:no', color: '#ef4444' },
+	{ id: 'in_progress', urn: 'auto:alignment:choice:in_progress', color: '#f59e0b' },
+	{ id: 'not_applicable', urn: 'auto:alignment:choice:not_applicable', color: '#9ca3af' }
+] as const;
+
+export const alignmentColorMap: Record<string, string> = Object.fromEntries(
+	AUTO_CHOICES.map((c) => [c.id, c.color])
+);
+
+/**
+ * Build a synthetic question dict for the auto-alignment question.
+ * Passed to Question.svelte as the `questions` prop.
+ */
+export function buildAutoAlignmentQuestion(translations: {
+	text: string;
+	yes: string;
+	no: string;
+	inProgress: string;
+	notApplicable: string;
+}) {
+	return {
+		[AUTO_ALIGNMENT_QUESTION_URN]: {
+			type: 'unique_choice',
+			text: translations.text,
+			choices: [
+				{ urn: AUTO_CHOICES[0].urn, value: translations.yes, color: AUTO_CHOICES[0].color },
+				{ urn: AUTO_CHOICES[1].urn, value: translations.no, color: AUTO_CHOICES[1].color },
+				{
+					urn: AUTO_CHOICES[2].urn,
+					value: translations.inProgress,
+					color: AUTO_CHOICES[2].color
+				},
+				{
+					urn: AUTO_CHOICES[3].urn,
+					value: translations.notApplicable,
+					color: AUTO_CHOICES[3].color
+				}
+			]
+		}
+	};
+}
+
+export function alignmentValueFromChoiceUrn(choiceUrn: string | null): string | null {
+	if (!choiceUrn) return null;
+	return AUTO_CHOICES.find((c) => c.urn === choiceUrn)?.id ?? null;
+}
+
+export function choiceUrnFromAlignmentValue(value: string | null): string | undefined {
+	if (!value) return undefined;
+	return AUTO_CHOICES.find((c) => c.id === value)?.urn;
+}
+
+/**
+ * Whether the auto-alignment question should be shown for a given requirement.
+ * Visible to respondents when respondent_alignment visibility includes them and
+ * the requirement has no framework questions of its own.
+ */
+export function shouldShowAutoQuestion(
+	requirement: Record<string, any>,
+	viewerRole: string,
+	ca: Record<string, any> | null | undefined
+): boolean {
+	if (viewerRole !== 'respondent') return false;
+	const hasQuestions =
+		requirement.questions != null && Object.keys(requirement.questions).length > 0;
+	if (hasQuestions) return false;
+	return isFieldEditable(ca, 'respondent_alignment', 'respondent');
 }

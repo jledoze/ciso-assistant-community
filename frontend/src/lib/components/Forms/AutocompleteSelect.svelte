@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { safeTranslate } from '$lib/utils/i18n';
 	import type { CacheLock } from '$lib/utils/types';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { formFieldProxy, type SuperForm } from 'sveltekit-superforms';
 	import { getSearchTarget, normalizeSearchString } from '$lib/utils/helpers';
 	import MultiSelect from 'svelte-multiselect';
@@ -75,6 +75,7 @@
 		lazy?: boolean;
 		lazyLimit?: number;
 		lazyThreshold?: number;
+		maxVisibleChips?: number;
 	}
 
 	let {
@@ -124,20 +125,22 @@
 		placeholder = '',
 		lazy = false,
 		lazyLimit = 10,
-		lazyThreshold = 50
+		lazyThreshold = 50,
+		maxVisibleChips: _maxVisibleChips = 3
 	}: Props = $props();
+
+	// Clamp to supported CSS range (chip-max-1 through chip-max-5 in app.css)
+	const maxVisibleChips = Math.max(1, Math.min(5, _maxVisibleChips));
 
 	if (translateOptions) {
 		options = options.map((option) => {
-			return {
-				...option,
-				translatedLabel:
-					safeTranslate(option.label) !== option.label
-						? safeTranslate(option.label)
-						: safeTranslate(option.value) !== option.value
-							? safeTranslate(option.value)
-							: option.label
-			};
+			const fromLabel = safeTranslate(option.label);
+			if (fromLabel !== option.label) return { ...option, translatedLabel: fromLabel };
+			if (option.label === option.value) {
+				const fromValue = safeTranslate(option.value);
+				if (fromValue !== option.value) return { ...option, translatedLabel: fromValue };
+			}
+			return { ...option, translatedLabel: option.label };
 		});
 	}
 
@@ -153,14 +156,23 @@
 	let isInternalUpdate = false;
 	let optionsLoaded = $state(Boolean(options.length));
 	const initialValue = resetForm ? undefined : $value;
-	const default_value = nullable ? null : selectedValues[0];
+	const default_value = nullable ? null : '';
+
+	// Seed `selected` synchronously when static options are passed and a form value
+	// already exists. Without this, the reactive `run()` below fires its first pass
+	// with selected=[] and overwrites $value to [] before onMount restores it — a
+	// race that wipes selections on remount (e.g. when a parent `{#key options}`
+	// block tears the component down on options change).
+	if (initialValue != null && options.length > 0) {
+		const ids = Array.isArray(initialValue) ? initialValue : [initialValue];
+		selected = options.filter((item) => ids.includes(item.value));
+	}
 
 	const multiSelectOptions = {
 		minSelect: $constraints && $constraints.required === true ? 1 : 0,
 		maxSelect: multiple ? undefined : 1,
 		liSelectedClass: multiple ? '!chip !preset-filled' : '!bg-transparent',
 		inputClass: 'focus:ring-0! focus:outline-hidden!',
-		outerDivClass: '!input !bg-surface-100 !px-2 !flex',
 		closeDropdownOnSelect: !multiple,
 		...additionalMultiselectOptions
 	};
@@ -172,6 +184,7 @@
 	let lazyInputEl = $state<HTMLInputElement | null>(null);
 	let effectiveLazy = $state(lazy);
 	const LAZY_HINT_VALUE = '__lazy_hint__';
+	let multiSelectOpen = $state(false);
 	const passthroughFilter = () => true;
 	const updateMissingConstraint = getContext<Function>('updateMissingConstraint');
 
@@ -431,9 +444,11 @@
 	});
 
 	$effect(() => {
-		if (!isInternalUpdate && $value && optionsLoaded && $value !== initialValue) {
-			const valueArray = Array.isArray($value) ? $value : [$value];
-			if (valueArray.length !== 0) {
+		if (!isInternalUpdate && optionsLoaded && $value !== initialValue) {
+			const valueArray = $value ? (Array.isArray($value) ? $value : [$value]) : [];
+			if (valueArray.length === 0) {
+				selected = [];
+			} else {
 				selected = options.filter((item) => valueArray.includes(item.value));
 			}
 		}
@@ -486,13 +501,23 @@
 	});
 
 	run(() => {
-		cachedValue = selected.map((option) => option.value);
+		const mapped = selected.map((option) => option.value);
+		cachedValue = mapped.length > 0 ? mapped : undefined;
 		cachedOptions = selected;
 	});
 
 	run(() => {
-		// Only update value after options are loaded
-		if (!isInternalUpdate && optionsLoaded && !arraysEqual(selectedValues, $value)) {
+		// Only update value after options are loaded.
+		// Read $value with untrack so this run() only fires on selected changes (user actions),
+		// not on external form resets — preventing fight-back against programmatic value clears.
+		if (
+			!isInternalUpdate &&
+			optionsLoaded &&
+			!arraysEqual(
+				selectedValues,
+				untrack(() => $value)
+			)
+		) {
 			isInternalUpdate = true;
 			$value = multiple ? selectedValues : (selectedValues[0] ?? default_value);
 			handleSelectChange();
@@ -535,6 +560,32 @@
 	});
 
 	const searchTargetMap = $derived(new Map(options.map((opt) => [opt, getSearchTarget(opt)])));
+
+	// Chip overflow: hide chips beyond max when dropdown is closed (multi-select only)
+	const overflowCount = $derived(
+		multiple && maxVisibleChips > 0 && !multiSelectOpen
+			? Math.max(0, selected.length - maxVisibleChips)
+			: 0
+	);
+
+	// Svelte action: restyle a chip's <li> as a "+N" badge (hide × button, muted background)
+	function styleAsBadge(node: HTMLElement) {
+		const li = node.closest('li');
+		if (!li) return;
+		li.style.cssText =
+			'background: var(--color-surface-300, #d1d5db) !important; cursor: pointer !important; color: var(--color-surface-700, #374151) !important;';
+		const removeBtn = li.querySelector('button');
+		if (removeBtn) (removeBtn as HTMLElement).style.display = 'none';
+		return {
+			destroy() {
+				li.style.cssText = '';
+				if (removeBtn) (removeBtn as HTMLElement).style.display = '';
+			}
+		};
+	}
+
+	// CSS class added to outerDiv — matching rules in app.css hide overflow chips via :nth-child
+	const overflowCssClass = $derived(overflowCount > 0 ? `chip-max-${maxVisibleChips}` : '');
 
 	const fastFilter = (opt: Option, searchText: string) => {
 		if (!searchText) {
@@ -591,10 +642,29 @@
 
 		<MultiSelect
 			bind:selected
-			options={effectiveLazy && selected.length > 0 && !lazyHasSearched
-				? [...options, { label: m.typeToSearch(), value: LAZY_HINT_VALUE, disabled: true }]
-				: options}
+			bind:open={multiSelectOpen}
+			options={new Proxy(
+				effectiveLazy && selected.length > 0 && !lazyHasSearched
+					? [...options, { label: m.typeToSearch(), value: LAZY_HINT_VALUE, disabled: true }]
+					: options,
+				{
+					get(target, prop, receiver) {
+						// Fix: svelte-multiselect's add() uses Array.includes() (reference equality) to
+						// check if a clicked option already exists. In Svelte 5, reactive proxy wrapping
+						// breaks reference identity, causing it to overwrite the clicked option with the
+						// raw search text. Override includes() to compare by .value instead.
+						if (prop === 'includes') {
+							return (item: unknown) =>
+								item !== null && typeof item === 'object' && 'value' in (item as object)
+									? (target as Option[]).some((opt) => opt.value === (item as Option).value)
+									: false;
+						}
+						return Reflect.get(target, prop, receiver);
+					}
+				}
+			)}
 			{...multiSelectOptions}
+			outerDivClass="!input !bg-surface-100 !px-2 !flex {overflowCssClass}"
 			disabled={_disabled}
 			allowEmpty={true}
 			{allowUserOptions}
@@ -650,36 +720,43 @@
 				{/if}
 			{/snippet}
 			{#snippet selectedItem({ option })}
-				{#if option.infoString?.position === 'prefix'}
-					<span class="text-xs text-surface-500">&nbsp;{option.infoString.string}</span>
-				{/if}
-				{#if option.path}
-					<span>
-						{#each option.path as item, idx}
-							<span class="text-xs font-light">
-								{item}
-								{#if idx < option.path.length - 1}
-									&nbsp;/
-								{/if}&nbsp;
-							</span>
-						{/each}
-					</span>
-				{/if}
-				{#if translateOptions && option}
-					{#if field === 'ro_to_couple'}
-						{@const [firstPart, ...restParts] = option.label.split(' - ')}
-						{safeTranslate(firstPart)} - {restParts.join(' - ')}
-					{:else}
-						{option.translatedLabel}
-					{/if}
+				{@const chipIdx = selected.findIndex((s) => s.value === option.value)}
+				{#if overflowCount > 0 && chipIdx === maxVisibleChips}
+					<span use:styleAsBadge>+{overflowCount}</span>
 				{:else}
-					{option.label || option}
-				{/if}
-				{#if option.infoString?.position === 'suffix'}
-					<span class="text-xs text-surface-500">&nbsp;{option.infoString.string}</span>
-				{/if}
-				{#if option.suggested}
-					<span class="text-sm text-surface-500"> {m.suggestedParentheses()}</span>
+					{@const coupleParts =
+						translateOptions && field === 'ro_to_couple' && typeof option.label === 'string'
+							? option.label.split(' - ')
+							: null}
+					{@const displayLabel = coupleParts
+						? `${safeTranslate(coupleParts[0])} - ${coupleParts.slice(1).join(' - ')}`
+						: translateOptions
+							? (option.translatedLabel ?? option.label ?? option)
+							: (option.label ?? option)}
+					{#if option.infoString?.position === 'prefix'}
+						<span class="text-xs text-surface-500">&nbsp;{option.infoString.string}</span>
+					{/if}
+					{#if option.path}
+						<span>
+							{#each option.path as item, idx}
+								<span class="text-xs font-light">
+									{item}
+									{#if idx < option.path.length - 1}
+										&nbsp;/
+									{/if}&nbsp;
+								</span>
+							{/each}
+						</span>
+					{/if}
+					<span class="inline-block max-w-[30ch] truncate align-bottom" title={displayLabel}>
+						{displayLabel}
+					</span>
+					{#if option.infoString?.position === 'suffix'}
+						<span class="text-xs text-surface-500">&nbsp;{option.infoString.string}</span>
+					{/if}
+					{#if option.suggested}
+						<span class="text-sm text-surface-500"> {m.suggestedParentheses()}</span>
+					{/if}
 				{/if}
 			{/snippet}
 		</MultiSelect>

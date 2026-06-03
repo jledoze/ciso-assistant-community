@@ -2,6 +2,7 @@
 	import { run } from 'svelte/legacy';
 
 	import CommandPalette from '$lib/components/CommandPalette/CommandPalette.svelte';
+	import ChatWidget from '$lib/components/ChatWidget/ChatWidget.svelte';
 	import { safeTranslate } from '$lib/utils/i18n';
 	import { AppBar } from '@skeletonlabs/skeleton-svelte';
 	import '../../app.css';
@@ -135,6 +136,8 @@
 
 	const modalStore: ModalStore = getModalStore();
 
+	const clientSettings = $derived($page.data.clientSettings);
+
 	// Initialize external link interceptor
 	$effect(() => {
 		if (browser) {
@@ -152,7 +155,7 @@
 </script>
 
 <svelte:head>
-	<title>CISO Assistant | {safeTranslate(displayTitle)}</title>
+	<title>{clientSettings.settings.name || 'CISO Assistant'} | {safeTranslate(displayTitle)}</title>
 </svelte:head>
 
 <!-- App Shell -->
@@ -227,6 +230,9 @@
 	</div>
 	<!-- Router Slot -->
 	<CommandPalette bind:this={commandPalette} />
+	{#if $page.data.featureflags?.chat_mode}
+		<ChatWidget />
+	{/if}
 	<main
 		class="min-h-screen p-8 bg-linear-to-br from-violet-100 to-slate-200 transition-all duration-300 {classesSidebarOpen(
 			sidebarOpen

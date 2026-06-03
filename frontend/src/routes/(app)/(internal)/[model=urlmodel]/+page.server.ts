@@ -9,7 +9,7 @@ import { modelSchema } from '$lib/utils/schemas';
 import type { ModelInfo } from '$lib/utils/types';
 import { type Actions } from '@sveltejs/kit';
 import { fail, superValidate, withFiles, setError, message } from 'sveltekit-superforms';
-import { zod } from 'sveltekit-superforms/adapters';
+import { zod4 as zod } from 'sveltekit-superforms/adapters';
 import { z } from 'zod';
 import type { PageServerLoad } from './$types';
 import { setFlash } from 'sveltekit-flash-message/server';
@@ -35,12 +35,18 @@ export const load: PageServerLoad = async ({ params, fetch }) => {
 
 		const response = await fetch(url);
 		if (response.ok) {
-			selectOptions[selectField.field] = await response.json().then((data) =>
-				Object.entries(data).map(([key, value]) => ({
+			selectOptions[selectField.field] = await response.json().then((data) => {
+				if (Array.isArray(data)) {
+					return data.map((item) => ({
+						label: item.label,
+						value: selectField.valueType === 'number' ? parseInt(item.value) : item.value
+					}));
+				}
+				return Object.entries(data).map(([key, value]) => ({
 					label: value,
 					value: selectField.valueType === 'number' ? parseInt(key) : key
-				}))
-			);
+				}));
+			});
 		} else {
 			console.error(`Failed to fetch data for ${selectField.field}: ${response.statusText}`);
 		}
