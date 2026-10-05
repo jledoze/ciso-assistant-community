@@ -4,6 +4,8 @@ A **domain** is a top-level container in CISO Assistant. It represents an organi
 
 Domains are the platform's primary mechanism for **access control** and **reporting boundaries**: a user's roles are granted _on a domain_, and most reports, dashboards, and audit roll-ups can be filtered by domain.
 
+<figure><img src="../.gitbook/assets/domains-list.png" alt=""><figcaption><p>The domain list — the Parent domain column is what makes the hierarchy visible</p></figcaption></figure>
+
 ## Building a hierarchy
 
 A domain can have a **parent domain** (`parent_folder` internally) — that's how you build a tree of sub-domains beneath a top-level one. The hierarchy lets you mirror the shape of your organisation in the platform: a "Group" domain on top, "Region" or "Subsidiary" domains beneath, "Business unit" or "Programme" domains beneath those, and so on.
@@ -49,7 +51,7 @@ Almost every operational object in CISO Assistant is bound to a domain: assessme
 Because reorganisations happen, the domain assignment is **not permanent**:
 
 - **One at a time** — edit any object and pick a different **Domain** in the form. The platform re-evaluates IAM scoping on save, so the object disappears from one domain's views and appears in the other's.
-- **In bulk** — for models that opt in to bulk operations, the [Batch actions](../features/batch-actions.md) toolbar exposes a **Change folder** action: select multiple rows in the table, choose the destination domain, and the move is applied across the selection in one go. Useful when reorganising a subsidiary into its own sub-tree, or pulling a programme's controls into a dedicated domain.
+- **In bulk** — for models that opt in to bulk operations, the [batch actions](../features/working-with-tables.md#batch-actions-many-rows) toolbar exposes a **Change folder** action: select multiple rows in the table, choose the destination domain, and the move is applied across the selection in one go. Useful when reorganising a subsidiary into its own sub-tree, or pulling a programme's controls into a dedicated domain.
 
 A handful of objects whose domain is forced by a parent (e.g. risk scenarios always inherit their risk assessment's domain) intentionally don't expose the batch **Change folder** action — moving the parent moves the children.
 

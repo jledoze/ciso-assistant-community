@@ -40,6 +40,14 @@
 	// Check if this node belongs to the assignment being edited
 	let isBeingEdited = $derived($editingRequirementIdsStore?.has(nodeId) ?? false);
 
+	// Own assignment plus, for a section, its descendants' — deduped.
+	let visibleAssignments = $derived([
+		...new Set([
+			...(assignmentInfo ?? []).map((info) => info.actorName),
+			...(assessable ? [] : sectionAssignments.map((sa) => sa.actorName))
+		])
+	]);
+
 	// For leaf nodes: check if this node is checked
 	let isChecked = $derived($checkedNodesStore?.has(nodeId) ?? false);
 
@@ -101,7 +109,7 @@
 	class="flex items-center gap-3 py-1.5 px-2 rounded-md transition-colors -ml-2
 		{assessable
 		? isLocked
-			? 'bg-gray-100 border border-gray-200'
+			? 'bg-surface-100-900 border border-surface-200-800'
 			: isChecked
 				? 'bg-violet-50 border border-violet-200'
 				: 'bg-green-50 border border-green-200 hover:bg-green-100 cursor-pointer'
@@ -155,7 +163,7 @@
 			<!-- Status icon for assessable nodes -->
 			{#if assessable}
 				{#if isLocked}
-					<span class="text-gray-400" title={m.alreadyAssigned()}>
+					<span class="text-surface-400-600" title={m.alreadyAssigned()}>
 						<i class="fa-solid fa-lock text-xs"></i>
 					</span>
 				{/if}
@@ -165,11 +173,11 @@
 			<span
 				class="font-medium text-sm {assessable
 					? isLocked
-						? 'text-gray-500'
-						: 'text-gray-900'
+						? 'text-surface-600-400'
+						: 'text-surface-950-50'
 					: availableChildrenIds.length === 0 && childrenIds.length > 0
-						? 'text-gray-400'
-						: 'text-gray-600'}"
+						? 'text-surface-400-600'
+						: 'text-surface-600-400'}"
 			>
 				{#if node_content}
 					<MarkdownRenderer content={node_content} />
@@ -178,35 +186,23 @@
 				{/if}
 			</span>
 
-			<!-- Assignment badges (hidden when node is being edited) -->
-			{#if assignmentInfo && !isBeingEdited}
-				{#each assignmentInfo as info}
+			{#if !isBeingEdited && visibleAssignments.length > 0}
+				{#each visibleAssignments as actorName}
 					<span
-						class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700 border border-blue-200"
-						title="{m.assignedTo()} {info.actorName}"
+						class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs {assessable
+							? 'bg-blue-100 text-blue-700 border border-blue-200'
+							: 'bg-blue-50 text-blue-600 border border-blue-100'}"
+						title="{m.assignedTo()} {actorName}"
 					>
 						<i class="fa-solid fa-user text-xs"></i>
-						<span class="max-w-[100px] truncate">{info.actorName}</span>
-					</span>
-				{/each}
-			{/if}
-
-			<!-- Section-level assignment badges -->
-			{#if !assessable && sectionAssignments.length > 0}
-				{#each sectionAssignments as sa}
-					<span
-						class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-50 text-blue-600 border border-blue-100"
-						title="{m.assignedTo()} {sa.actorName}"
-					>
-						<i class="fa-solid fa-user text-xs"></i>
-						<span class="max-w-[80px] truncate">{sa.actorName}</span>
+						<span class="max-w-[100px] truncate">{actorName}</span>
 					</span>
 				{/each}
 			{/if}
 
 			<!-- Children count for parent nodes -->
 			{#if !assessable && childrenIds.length > 0}
-				<span class="text-xs text-gray-400">
+				<span class="text-xs text-surface-400-600">
 					({availableChildrenIds.length}
 					{m.available()})
 				</span>
@@ -215,7 +211,7 @@
 
 		<!-- Non-assessable indicator -->
 		{#if !assessable && childrenIds.length === 0}
-			<span class="text-xs text-gray-400 italic">
+			<span class="text-xs text-surface-400-600 italic">
 				({m.section()})
 			</span>
 		{/if}

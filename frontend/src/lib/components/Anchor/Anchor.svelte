@@ -22,6 +22,14 @@
 	}: Props = $props();
 
 	const handleClick = (event) => {
+		// Modified clicks (cmd/ctrl/shift/alt or non-primary button) open in a new tab/window:
+		// let the browser handle them natively and keep parent handlers (e.g. table rows)
+		// from also navigating the current tab.
+		if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
+			event.stopPropagation();
+			return;
+		}
+
 		const navLabel: string = label || event.target.innerText;
 		if (!navLabel) return;
 
@@ -37,6 +45,6 @@
 	};
 </script>
 
-<a onclick={handleClick} {href} {...rest}>
+<a aria-label={label || undefined} onclick={handleClick} {href} {...rest}>
 	{@render children?.()}
 </a>

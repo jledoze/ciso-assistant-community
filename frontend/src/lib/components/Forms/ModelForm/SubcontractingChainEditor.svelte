@@ -3,6 +3,7 @@
 	import type { SuperValidated } from 'sveltekit-superforms';
 	import { onMount } from 'svelte';
 	import { m } from '$paraglide/messages';
+	import { fetchAllPages } from '$lib/utils/pagination';
 
 	interface ChainRow {
 		subcontractor: string;
@@ -174,10 +175,7 @@
 
 	onMount(async () => {
 		try {
-			const res = await fetch('/entities?is_active=true');
-			if (!res.ok) return;
-			const data = await res.json();
-			const results = Array.isArray(data?.results) ? data.results : data;
+			const results = await fetchAllPages(fetch, '/entities?is_active=true');
 			const next = new Map(entityLabels);
 			for (const e of results) {
 				next.set(e.id as string, (e.name ?? e.str ?? e.id) as string);
@@ -192,19 +190,19 @@
 {#snippet nodeCard(node: TreeNode, isRoot: boolean)}
 	<div
 		class="flex items-center gap-3 rounded border p-3 {isRoot
-			? 'border-surface-300 bg-surface-100'
-			: 'border-surface-200'}"
+			? 'border-surface-300-700 bg-surface-100-900'
+			: 'border-surface-200-800'}"
 		data-testid={isRoot ? 'chain-direct-provider' : 'chain-row'}
 	>
 		<div
 			class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full {isRoot
 				? 'bg-primary-500 text-white'
-				: 'bg-surface-300 text-surface-700'}"
+				: 'bg-surface-300-700 text-surface-700-300'}"
 		>
 			<i class="fa-solid {isRoot ? 'fa-building' : 'fa-sitemap'}" aria-hidden="true"></i>
 		</div>
 		<div class="flex-1">
-			<div class="text-xs font-semibold tracking-wide text-surface-600 uppercase">
+			<div class="text-xs font-semibold tracking-wide text-surface-600-400 uppercase">
 				{#if isRoot}
 					{m.subcontractingDirectProvider()}
 				{:else}
@@ -281,8 +279,8 @@
 
 	<!-- Inline picker when adding a child to this node -->
 	{#if addingChildOf === node.entityId}
-		<div class="mt-2 rounded border border-dashed border-surface-300 p-3">
-			<div class="mb-2 text-xs font-semibold tracking-wide text-surface-600 uppercase">
+		<div class="mt-2 rounded border border-dashed border-surface-300-700 p-3">
+			<div class="mb-2 text-xs font-semibold tracking-wide text-surface-600-400 uppercase">
 				{m.addSubcontractorTo({ entity: displayLabel(node.entityId) })}
 			</div>
 			{#key chain.length + '-' + node.entityId}
@@ -305,7 +303,7 @@
 
 	<!-- Children -->
 	{#if node.children.length > 0}
-		<div class="ml-6 border-l-2 border-surface-300 pl-4 mt-2 space-y-2">
+		<div class="ml-6 border-l-2 border-surface-300-700 pl-4 mt-2 space-y-2">
 			{#each node.children as child (child.entityId)}
 				{@render nodeCard(child, false)}
 			{/each}

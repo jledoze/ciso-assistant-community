@@ -146,13 +146,13 @@
 		<div class="flex items-center gap-2">
 			<!-- Color palette presets -->
 			<div class="flex items-center gap-1">
-				<span class="text-xs text-gray-500"><i class="fa-solid fa-palette mr-1"></i></span>
+				<span class="text-xs text-surface-600-400"><i class="fa-solid fa-palette mr-1"></i></span>
 				{#each Object.entries(COLOR_PALETTES) as [name, colors]}
 					<button
 						type="button"
 						class="flex gap-0.5 px-1.5 py-1 rounded border text-xs {selectedPalette === name
 							? 'border-primary-500 ring-1 ring-primary-300'
-							: 'border-gray-300'}"
+							: 'border-surface-300-700'}"
 						onclick={() => applyPalette(name)}
 						title={name}
 						aria-label="{name} color palette"
@@ -164,7 +164,7 @@
 					</button>
 				{/each}
 			</div>
-			<button type="button" class="btn variant-filled-primary btn-sm" onclick={addLevel}>
+			<button type="button" class="btn preset-filled-primary-500 btn-sm" onclick={addLevel}>
 				<i class="fa-solid fa-plus mr-1"></i>
 				{m.addLevel()}
 			</button>
@@ -179,11 +179,11 @@
 					<th class="w-24">{m.abbreviation()}</th>
 					<th
 						>{m.name()}{#if isTranslating}
-							<span class="text-xs font-normal text-gray-400">({activeLang})</span>{/if}</th
+							<span class="text-xs font-normal text-surface-500">({activeLang})</span>{/if}</th
 					>
 					<th
 						>{m.description()}{#if isTranslating}
-							<span class="text-xs font-normal text-gray-400">({activeLang})</span>{/if}</th
+							<span class="text-xs font-normal text-surface-500">({activeLang})</span>{/if}</th
 					>
 					<th class="w-20">{m.hexcolor()}</th>
 					<th class="w-28"></th>
@@ -223,7 +223,7 @@
 							/>
 							{#if isTranslating && getBaseHint(level, 'name')}
 								<span
-									class="text-xs text-gray-400 block mt-0.5 truncate"
+									class="text-xs text-surface-500 block mt-0.5 truncate"
 									title={getBaseHint(level, 'name')}
 								>
 									↳ {baseLang}: {getBaseHint(level, 'name')}
@@ -242,7 +242,7 @@
 							/>
 							{#if isTranslating && getBaseHint(level, 'description')}
 								<span
-									class="text-xs text-gray-400 block mt-0.5 truncate"
+									class="text-xs text-surface-500 block mt-0.5 truncate"
 									title={getBaseHint(level, 'description')}
 								>
 									↳ {baseLang}: {getBaseHint(level, 'description')}
@@ -260,7 +260,7 @@
 						<td class="flex gap-1 items-center">
 							<button
 								type="button"
-								class="btn btn-sm variant-ghost"
+								class="btn btn-sm preset-outlined"
 								disabled={i === 0}
 								onclick={() => moveLevel(i, -1)}
 								title={m.moveUp()}
@@ -270,7 +270,7 @@
 							</button>
 							<button
 								type="button"
-								class="btn btn-sm variant-ghost"
+								class="btn btn-sm preset-outlined"
 								disabled={i === levels.length - 1}
 								onclick={() => moveLevel(i, 1)}
 								title={m.moveDown()}
@@ -280,7 +280,7 @@
 							</button>
 							<button
 								type="button"
-								class="btn btn-sm variant-ghost-error"
+								class="btn btn-sm preset-outlined-error-500"
 								disabled={levels.length <= 2}
 								onclick={() => removeLevel(i)}
 								title={m.removeLevel()}

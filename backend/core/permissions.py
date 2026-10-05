@@ -1,9 +1,9 @@
 from rest_framework import permissions
 from rest_framework.request import Request
 from django.contrib.auth import get_user_model
-from .utils import RoleCodename
 
-from iam.models import RoleAssignment, Folder, Permission, Role
+from global_settings.utils import ff_is_enabled
+from iam.models import RoleAssignment, Folder, Permission
 
 User = get_user_model()
 
@@ -30,6 +30,13 @@ class RBACPermissions(permissions.DjangoObjectPermissions):
         if not request.method:
             return False
 
+        # Built-in objects are code-managed and cannot be deleted through the API,
+        # regardless of the caller's permissions. Update immutability is enforced
+        # field-by-field in the serializer (see BUILTIN_EDITABLE_FIELDS), so that
+        # models may keep specific fields editable on built-in rows.
+        if request.method == "DELETE" and getattr(obj, "builtin", False):
+            return False
+
         perms = self.get_required_permissions(request.method, type(obj))
         if not perms:
             return False
@@ -48,10 +55,7 @@ class RBACPermissions(permissions.DjangoObjectPermissions):
         if obj == request.user and perm.codename == "view_user":
             return True
 
-        # for view, use is_object_readable to implement is_published correctly
-        if request.method in ["GET", "OPTIONS", "HEAD"] and getattr(
-            obj, "is_published", False
-        ):
+        if request.method in ["GET", "OPTIONS", "HEAD"]:
             return RoleAssignment.is_object_readable(request.user, type(obj), obj.id)
 
         return RoleAssignment.is_access_allowed(
@@ -61,8 +65,22 @@ class RBACPermissions(permissions.DjangoObjectPermissions):
         )
 
 
-class IsAdministrator(permissions.BasePermission):
+class IsGlobalAdmin(permissions.BasePermission):
     def has_permission(self, request, view):
-        return RoleAssignment.has_role(
-            user=request.user, role=Role.objects.get(name=RoleCodename.ADMINISTRATOR)
-        )
+        user = request.user
+        return bool(user and user.is_authenticated and user.is_admin())
+
+
+class FeatureFlagRequired(permissions.BasePermission):
+    """Deny access unless the feature flag named by the view's ``feature_flag``
+    attribute is enabled. Server-side counterpart to the UI flag gating, so a
+    flag-off / community build cannot reach the endpoint via the API."""
+
+    message = "This feature is not enabled."
+
+    def has_permission(self, request, view):
+        flag = getattr(view, "feature_flag", None)
+        if not flag:
+            return True
+        flags = (flag,) if isinstance(flag, str) else flag
+        return any(ff_is_enabled(f) for f in flags)

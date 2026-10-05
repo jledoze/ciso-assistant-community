@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount } from 'svelte';
+
+	import { mountThemeAwareChart } from '$lib/utils/echartsTheme';
 	import { m } from '$paraglide/messages';
 	import { safeTranslate } from '$lib/utils/i18n';
 
@@ -51,6 +53,7 @@
 
 	function createOption(data: any) {
 		return {
+			backgroundColor: 'transparent',
 			toolbox: {
 				show: true,
 				feature: {
@@ -111,23 +114,25 @@
 		};
 	}
 
-	onMount(async () => {
-		if (tree.length === 0) return;
-		echarts = await import('echarts');
-		chart = echarts.init(document.getElementById(chart_id), null, { renderer: 'svg' });
-
-		if (translatedTree?.length > 0) {
-			chart.setOption(createOption(translatedTree));
-		}
-
-		window.addEventListener('resize', handleResize);
+	onMount(() => {
+		let dispose: (() => void) | undefined;
+		let active = true;
+		(async () => {
+			if (tree.length === 0) return;
+			echarts = await import('echarts');
+			if (!active) return;
+			const el = document.getElementById(chart_id);
+			if (!el) return;
+			dispose = mountThemeAwareChart(echarts, el, () => createOption(translatedTree), {
+				onChart: (c: any) => (chart = c)
+			});
+		})();
+		return () => {
+			active = false;
+			dispose?.();
+			chart = null;
+		};
 	});
-
-	function handleResize() {
-		if (chart) {
-			chart.resize();
-		}
-	}
 
 	// Update chart when tree data changes
 	$effect(() => {
@@ -135,20 +140,11 @@
 			chart.setOption(createOption(translatedTree));
 		}
 	});
-
-	onDestroy(() => {
-		if (typeof window !== 'undefined') {
-			window.removeEventListener('resize', handleResize);
-		}
-		if (chart) {
-			chart.dispose();
-		}
-	});
 </script>
 
 {#if tree.length === 0}
 	<div class="flex flex-col justify-center items-center h-full">
-		<span class="text-center text-gray-600">{m.noDataAvailable()}</span>
+		<span class="text-center text-surface-600-400">{m.noDataAvailable()}</span>
 	</div>
 {:else}
 	<div id={chart_id} class="{width} {height} {classesContainer}"></div>

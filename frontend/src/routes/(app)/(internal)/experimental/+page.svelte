@@ -2,22 +2,17 @@
 	import Article from '$lib/components/DataViz/Article.svelte';
 	import { pageTitle } from '$lib/utils/stores';
 	import { m } from '$paraglide/messages';
+	import { experimentalExtras } from '$lib/utils/experimental-extras';
 
 	$pageTitle = 'Experimental';
 </script>
 
-<div class="bg-white grid grid-cols-2 p-4 gap-4 card">
+<div class="bg-surface-50-950 grid grid-cols-2 p-4 gap-4 card">
 	<Article
 		title={m.requirementsExplorer()}
 		desc={m.visualizeRequirements()}
 		link="/requirement-assessments"
 		tags={['analysis', 'audit']}
-	/>
-	<Article
-		title={m.findings()}
-		desc={m.findingsExplorer()}
-		link="/findings"
-		tags={['analysis', 'findings']}
 	/>
 	<Article
 		title="Batch Creation"
@@ -26,28 +21,10 @@
 		tags={['assets', 'entities', 'ebios-rm', 'bulk']}
 	/>
 	<Article
-		title={m.matrixEditor()}
-		desc={m.matrixEditorDescription()}
-		link="/experimental/matrix-editor"
-		tags={['risk', 'matrix', 'editor']}
-	/>
-	<Article
-		title="Framework Builder"
-		desc="Create and edit compliance frameworks with a visual builder"
-		link="/experimental/framework-builder"
-		tags={['frameworks', 'builder', 'editor']}
-	/>
-	<Article
 		title="Bulk evidence upload"
 		desc="Upload multiple files or a whole directory as evidences, with conflict-resolution strategies (skip, add revision, replace, rename) and SHA-256 duplicate detection."
 		link="/experimental/evidence-bulk-upload"
 		tags={['evidences', 'bulk', 'upload']}
-	/>
-	<Article
-		title="Preset Editor"
-		desc="Author presets — scaffolds and steps. Create from scratch or fork a library preset."
-		link="/experimental/preset-editor"
-		tags={['presets', 'journey', 'editor']}
 	/>
 	<Article
 		title="Questionnaire Autopilot"
@@ -62,11 +39,20 @@
 		tags={['assets', 'graph', 'canvas', 'prototype']}
 	/>
 	<Article
+		title="Asset Dependency Map"
+		desc="Focus on one asset and see everything it depends on and everything depending on it, across domains. Link, unlink and create assets in place."
+		link="/experimental/asset-map"
+		tags={['assets', 'graph', 'dependencies', 'prototype']}
+	/>
+	<Article
 		title="Analytics Export"
 		desc="Export all analytics dashboard data as a multi-sheet Excel file (Summary, Risk Levels, Compliance, Controls, Incidents) — ready to use in Power BI or any reporting tool."
 		link="/experimental/analytics-export"
 		tags={['analytics', 'export', 'xlsx', 'reporting']}
 	/>
+	{#each experimentalExtras as extra (extra.link)}
+		<Article title={extra.title} desc={extra.desc} link={extra.link} tags={extra.tags} />
+	{/each}
 	<!-- <Article -->
 	<!-- 	title="Multi-file evidence (UX prototype)" -->
 	<!-- 	desc="Imagine an evidence whose revisions hold multiple files at once. History timeline with file-level diff (added / removed / replaced / unchanged) and arbitrary revision compare. Static fake data, no backend." -->

@@ -1,6 +1,5 @@
 <script lang="ts">
 	import AutocompleteSelect from '../AutocompleteSelect.svelte';
-	import FolderTreeSelect from '../FolderTreeSelect.svelte';
 	import TextField from '../TextField.svelte';
 	import TextArea from '../TextArea.svelte';
 	import Select from '../Select.svelte';
@@ -20,6 +19,7 @@
 		context?: string;
 		formDataCache?: Record<string, any>;
 		initialData?: Record<string, any>;
+		object?: any;
 	}
 
 	let {
@@ -28,7 +28,8 @@
 		cacheLocks = {},
 		context = '',
 		formDataCache = $bindable({}),
-		initialData = {}
+		initialData = {},
+		object = {}
 	}: Props = $props();
 
 	const { value: is_recurrent } = formFieldProxy(form, 'is_recurrent');
@@ -49,12 +50,19 @@
 	let isScheduleTainted = $derived(scheduleTaintedHandler($scheduleTainted));
 </script>
 
-<FolderTreeSelect
+<AutocompleteSelect
 	{form}
-	field="folder"
-	cacheLock={cacheLocks['folder']}
-	bind:cachedValue={formDataCache['folder']}
-	label={m.domain()}
+	multiple
+	optionsEndpoint="actors?user__is_third_party=False"
+	optionsLabelField="str"
+	optionsInfoFields={{
+		fields: [{ field: 'type', translate: true }],
+		position: 'prefix'
+	}}
+	field="assigned_to"
+	cacheLock={cacheLocks['assigned_to']}
+	bind:cachedValue={formDataCache['assigned_to']}
+	label={m.assignedTo()}
 />
 {#if !$is_recurrent}
 	<TextField
@@ -90,7 +98,7 @@
 			bind:cachedValue={formDataCache['task_date']}
 		/>
 		<div class="flex w-full items-center space-x-3">
-			<span class="mt-5 font-semibold text-sm text-gray-800">{m.each()}</span>
+			<span class="mt-5 font-semibold text-sm text-surface-950-50">{m.each()}</span>
 			<NumberField
 				{form}
 				field="interval"
@@ -117,7 +125,7 @@
 		</div>
 		<div class="flex w-full items-center space-x-3">
 			{#if $frequency == 'MONTHLY' || $frequency == 'YEARLY'}
-				<span class="mt-5 font-semibold text-sm text-gray-800">{m.the()}</span>
+				<span class="mt-5 font-semibold text-sm text-surface-950-50">{m.the()}</span>
 				<AutocompleteSelect
 					{form}
 					multiple
@@ -164,7 +172,7 @@
 		</div>
 		{#if $frequency == 'YEARLY'}
 			<div class="flex w-full items-center space-x-3">
-				<span class="mt-5 font-semibold text-sm text-gray-800">{m.of()}</span>
+				<span class="mt-5 font-semibold text-sm text-surface-950-50">{m.of()}</span>
 				<AutocompleteSelect
 					{form}
 					multiple
@@ -223,32 +231,19 @@
 	optionsExtraFields={[['folder', 'str']]}
 	optionsLabelField="auto"
 	helpText={m.taskTemplateEvidenceHelpText()}
+	helpTextClass="mt-1 border-l-2 border-primary-500 bg-primary-500/5 rounded-r py-1 pl-2"
 	field="evidences"
 	label={m.evidences()}
 	translateOptions={false}
-/>
-<AutocompleteSelect
-	{form}
-	multiple
-	optionsEndpoint="actors?user__is_third_party=False"
-	optionsLabelField="str"
-	optionsInfoFields={{
-		fields: [{ field: 'type', translate: true }],
-		position: 'prefix'
+	allowUserOptions="append"
+	additionalMultiselectOptions={{
+		createOptionMsg: ({ searchText }: { searchText: string }) =>
+			m.createExpectedEvidence({ name: searchText }),
+		liUserMsgClass: '!text-primary-700 font-semibold',
+		liActiveUserMsgClass: '!bg-primary-500/10'
 	}}
-	field="assigned_to"
-	cacheLock={cacheLocks['assigned_to']}
-	bind:cachedValue={formDataCache['assigned_to']}
-	label={m.assignedTo()}
 />
 <Dropdown open={false} style="hover:text-primary-700" icon="fa-solid fa-list" header={m.more()}>
-	<TextField
-		{form}
-		field="ref_id"
-		label={m.refId()}
-		cacheLock={cacheLocks['ref_id']}
-		bind:cachedValue={formDataCache['ref_id']}
-	/>
 	<AutocompleteSelect
 		multiple
 		lazy
@@ -272,6 +267,10 @@
 		{form}
 		optionsEndpoint="applied-controls"
 		optionsExtraFields={[['folder', 'str']]}
+		optionsInfoFields={{
+			fields: [{ field: 'category', translate: true }],
+			position: 'prefix'
+		}}
 		field="applied_controls"
 		label={m.appliedControls()}
 	/>
@@ -304,6 +303,16 @@
 		cacheLock={cacheLocks['findings_assessment']}
 		bind:cachedValue={formDataCache['findings_assessment']}
 		label={m.findingsAssessment()}
+	/>
+	<AutocompleteSelect
+		multiple
+		{form}
+		optionsEndpoint="findings"
+		optionsExtraFields={[['folder', 'str']]}
+		field="findings"
+		cacheLock={cacheLocks['findings']}
+		bind:cachedValue={formDataCache['findings']}
+		label={m.findings()}
 	/>
 	<MarkdownField
 		{form}

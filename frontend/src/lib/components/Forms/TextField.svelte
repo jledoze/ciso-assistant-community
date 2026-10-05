@@ -5,12 +5,12 @@
 	import { onMount } from 'svelte';
 	import type { CacheLock } from '$lib/utils/types';
 	import { safeTranslate } from '$lib/utils/i18n';
-	import type { CssClasses } from '@skeletonlabs/skeleton-svelte';
 
 	interface Props {
 		class?: string;
 		type?: string;
-		classesContainer?: CssClasses;
+		step?: string | number;
+		classesContainer?: string;
 		label?: string | undefined;
 		field: string;
 		valuePath?: any; // the place where the value is stored in the form. This is useful for nested objects
@@ -27,6 +27,7 @@
 	let {
 		class: _class = '',
 		type = 'text',
+		step = 'any',
 		classesContainer = '',
 		label = $bindable(),
 		field,
@@ -115,11 +116,13 @@
 	<div class={classesDisabled(disabled)}>
 		{#if label !== undefined && !hidden}
 			{#if $constraints?.required || required}
-				<label class="text-sm font-semibold" for={field}
+				<label class="text-sm font-semibold" for="form-input-{field.replaceAll('_', '-')}"
 					>{label} <span class="text-red-500">*</span></label
 				>
 			{:else}
-				<label class="text-sm font-semibold" for={field}>{label}</label>
+				<label class="text-sm font-semibold" for="form-input-{field.replaceAll('_', '-')}"
+					>{label}</label
+				>
 			{/if}
 		{/if}
 		{#if $errors}
@@ -159,12 +162,13 @@
 				bind:value={$value}
 				{...$constraints}
 				{...rest}
+				{...type === 'number' ? { step } : {}}
 				{disabled}
 				{required}
 			/>
 		{/if}
 	</div>
 	{#if helpText}
-		<p class="text-sm text-gray-500 whitespace-pre-line">{helpText}</p>
+		<p class="text-sm text-surface-600-400 whitespace-pre-line">{helpText}</p>
 	{/if}
 </div>

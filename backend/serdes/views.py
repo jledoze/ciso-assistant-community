@@ -14,15 +14,13 @@ from rest_framework import status
 from rest_framework.parsers import FileUploadParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.pagination import LimitOffsetPagination
+from core.pagination import CustomLimitOffsetPagination
 from core.models import EvidenceRevision
 from core.utils import compare_schema_versions
-from iam.models import User
+from iam.models import User, Folder
 from serdes.serializers import LoadBackupSerializer
 
-from auditlog.models import LogEntry
 from django.db.models.signals import post_save
-from core.custom_middleware import add_user_info_to_log_entry
 from django.apps import apps
 from django.conf import settings
 from auditlog.context import disable_auditlog
@@ -38,10 +36,10 @@ class ExportBackupView(APIView):
     def get(self, request, *args, **kwargs):
         if not request.user.has_backup_permission:
             return Response(status=status.HTTP_403_FORBIDDEN)
-        response = HttpResponse(content_type="application/json")
+        response = HttpResponse(content_type="application/gzip")
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         response["Content-Disposition"] = (
-            f'attachment; filename="ciso-assistant-db-{settings.VERSION}-{timestamp}.json"'
+            f'attachment; filename="ciso-assistant-db-{settings.VERSION}-{timestamp}.json.gz"'
         )
 
         buffer = io.StringIO()
@@ -77,9 +75,9 @@ class LoadBackupView(APIView):
     serializer_class = LoadBackupSerializer
 
     def load_backup(self, request, decompressed_data, backup_version, current_version):
-        # Temporarily disconnect the problematic signal
-        post_save.disconnect(add_user_info_to_log_entry, sender=LogEntry)
-
+        # The LogEntry enrichment receiver disconnected here in #1707 is gone:
+        # folder is now captured inline via AbstractBaseModel.get_additional_data,
+        # so loaddata of auditlog.logentry fixtures no longer triggers enrichment.
         backup_buffer = io.StringIO()
         try:
             management.call_command(
@@ -139,6 +137,8 @@ class LoadBackupView(APIView):
                         "auditlog.logentry",
                     ],
                 )
+                # Invalidate the root folder cache (as the backup may have changed the root folder).
+                Folder._init_root_folder()
 
         except Exception as e:
             logger.error("Error while loading backup", exc_info=e)
@@ -178,7 +178,6 @@ class LoadBackupView(APIView):
             return Response({}, status=status.HTTP_400_BAD_REQUEST)
         finally:
             post_save.disconnect(fixture_callback)
-            post_save.connect(add_user_info_to_log_entry, sender=LogEntry)
 
         # Enforce LICENSE_SEATS after successful restore
         license_seats = getattr(settings, "LICENSE_SEATS", None)
@@ -453,7 +452,7 @@ class FullRestoreView(APIView):
                                 header = json.loads(block_data[:i].decode("utf-8"))
                                 header_end = i
                                 break
-                            except (json.JSONDecodeError, UnicodeDecodeError):
+                            except json.JSONDecodeError, UnicodeDecodeError:
                                 continue
 
                         if not header:
@@ -656,7 +655,7 @@ class AttachmentMetadataView(APIView):
             queryset = queryset.filter(created_at__lte=created_before)
 
         queryset = queryset.order_by("created_at", "id")
-        paginator = LimitOffsetPagination()
+        paginator = CustomLimitOffsetPagination()
         paginated_queryset = paginator.paginate_queryset(queryset, request)
 
         results = []
@@ -898,7 +897,7 @@ class BatchUploadAttachmentsView(APIView):
                             header = json.loads(block_data[:i].decode("utf-8"))
                             header_end = i
                             break
-                        except (json.JSONDecodeError, UnicodeDecodeError):
+                        except json.JSONDecodeError, UnicodeDecodeError:
                             continue
 
                     if not header:

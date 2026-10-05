@@ -15,22 +15,36 @@
 	import type { ActionResult } from '@sveltejs/kit';
 	import TreeViewItemContent from '../../frameworks/[id=uuid]/TreeViewItemContent.svelte';
 	import TreeExpandCollapseToggle from '$lib/components/TreeView/TreeExpandCollapseToggle.svelte';
+	import MarkdownRenderer from '$lib/components/MarkdownRenderer.svelte';
+	import InstantiateWorkflows from '$lib/components/Libraries/InstantiateWorkflows.svelte';
 
 	let { data } = $props();
 	let loading = $state({ form: false, library: '' });
 	let expandedNodes: string[] = $state([]);
 	const showRisks = true;
 
+	// The instantiate action lives on the LOADED counterpart.
+	// Two data shapes reach this page: stored data (loaded_library holds the
+	// counterpart id, null when not loaded) and, for exclusively-loaded
+	// libraries, the loader already swapped to loaded data (its id differs
+	// from the route param).
+	const loadedLibraryId = $derived(
+		data.library.loaded_library ?? (data.library.id !== page.params.id ? data.library.id : null)
+	);
+	const workflowCount = $derived(data.library.objects_meta?.workflows ?? 0);
+
 	interface LibraryObjects {
 		[key: string]: any;
 	}
 
-	const libraryObjects: LibraryObjects = data?.library?.objects ?? [];
-	const riskMatrices = libraryObjects['risk_matrix'] ?? [];
-	const referenceControls = libraryObjects['reference_controls'] ?? [];
-	const threats = libraryObjects['threats'] ?? [];
-	const metricDefinitions = libraryObjects['metric_definitions'] ?? [];
-	const framework = libraryObjects['framework'];
+	// Derived, not plain consts: previewing another library reuses the component, so
+	// a captured value would show the previous one.
+	const libraryObjects: LibraryObjects = $derived(data?.library?.objects ?? {});
+	const riskMatrices = $derived(libraryObjects['risk_matrix'] ?? []);
+	const referenceControls = $derived(libraryObjects['reference_controls'] ?? []);
+	const threats = $derived(libraryObjects['threats'] ?? []);
+	const metricDefinitions = $derived(libraryObjects['metric_definitions'] ?? []);
+	const framework = $derived(libraryObjects['framework']);
 
 	function transformToTreeView(nodes) {
 		return nodes.map(([id, node]) => {
@@ -43,13 +57,13 @@
 		});
 	}
 
-	const riskMatricesTable: TableSource = {
+	const riskMatricesTable: TableSource = $derived({
 		head: { name: 'name', description: 'description' },
 		body: tableSourceMapper(riskMatrices, ['name', 'description']),
 		meta: { count: riskMatrices.length }
-	};
+	});
 
-	const referenceControlsTable: TableSource = {
+	const referenceControlsTable: TableSource = $derived({
 		head: {
 			ref_id: 'ref',
 			name: 'name',
@@ -65,15 +79,15 @@
 			'csf_function'
 		]),
 		meta: { count: referenceControls.length }
-	};
+	});
 
-	const threatsTable: TableSource = {
+	const threatsTable: TableSource = $derived({
 		head: { ref_id: 'ref', name: 'name', description: 'description' },
 		body: tableSourceMapper(threats, ['ref_id', 'name', 'description']),
 		meta: { count: threats.length }
-	};
+	});
 
-	const metricDefinitionsTable: TableSource = {
+	const metricDefinitionsTable: TableSource = $derived({
 		head: {
 			ref_id: 'ref',
 			name: 'name',
@@ -89,7 +103,7 @@
 			'unit'
 		]),
 		meta: { count: metricDefinitions.length }
-	};
+	});
 
 	function riskMatricesPreview(riskMatrices: []) {
 		let riskMatricesDumps = [];
@@ -127,7 +141,7 @@
 	);
 </script>
 
-<div class="card bg-white p-4 shadow-sm space-y-4">
+<div class="card bg-surface-50-950 p-4 shadow-sm space-y-4">
 	<div class="flex flex-col space-y-2">
 		<span class="w-full flex flex-row justify-between">
 			<h1 class="font-medium text-xl">{data.library.name}</h1>
@@ -170,20 +184,25 @@
 			</div>
 		</span>
 		<div class="space-y-1">
-			<p class="text-md leading-5 text-gray-700">
-				<strong>{m.description()}</strong>: {data.library.description}
+			<p class="text-md leading-5 text-surface-700-300">
+				<strong>{m.description()}</strong>:
 			</p>
-			<p class="text-md leading-5 text-gray-700">
+			<MarkdownRenderer content={data.library.description} />
+
+			<p class="text-md leading-5 text-surface-700-300">
 				<strong>{m.provider()}</strong>: {data.library.provider}
 			</p>
-			<p class="text-md leading-5 text-gray-700">
+
+			<p class="text-md leading-5 text-surface-700-300">
 				<strong>{m.packager()}</strong>: {data.library.packager}
 			</p>
-			<p class="text-md leading-5 text-gray-700">
+
+			<p class="text-md leading-5 text-surface-700-300">
 				<strong>{m.version()}</strong>: {data.library.version}
 			</p>
+
 			{#if data.library.publication_date}
-				<p class="text-md leading-5 text-gray-700">
+				<p class="text-md leading-5 text-surface-700-300">
 					<strong>{m.publicationDate()}</strong>: {formatDateOrDateTime(
 						data.library.publication_date,
 						getLocale()
@@ -191,7 +210,7 @@
 				</p>
 			{/if}
 			{#if data.library.dependencies}
-				<p class="text-md leading-5 text-gray-700">
+				<p class="text-md leading-5 text-surface-700-300">
 					<strong>{m.dependencies()}</strong>:
 				</p>
 				<ul class="list-disc list-inside">
@@ -201,12 +220,13 @@
 				</ul>
 			{/if}
 			{#if data.library.copyright}
-				<p class="text-md leading-5 text-gray-700">
-					<strong>{m.copyright()}</strong>: {data.library.copyright}
+				<p class="text-md leading-5 text-surface-700-300">
+					<strong>{m.copyright()}</strong>:
 				</p>
+				<MarkdownRenderer content={data.library.copyright} />
 			{/if}
 			{#if data.library.filtering_labels && data.library.filtering_labels.length > 0}
-				<p class="text-md leading-5 text-gray-700">
+				<p class="text-md leading-5 text-surface-700-300">
 					<strong>{m.labels()}</strong>:
 				</p>
 				<ul class="list-disc list-inside">
@@ -217,6 +237,10 @@
 			{/if}
 		</div>
 	</div>
+
+	{#if loadedLibraryId}
+		<InstantiateWorkflows {loadedLibraryId} count={workflowCount} />
+	{/if}
 
 	{#if riskMatrices.length > 0}
 		<Dropdown

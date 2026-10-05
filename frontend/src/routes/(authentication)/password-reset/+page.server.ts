@@ -12,7 +12,7 @@ import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async (event) => {
 	// redirect user if already logged in
-	if (event.locals.user) {
+	if (await event.locals.getUser()) {
 		redirect(302, '/');
 	}
 
@@ -57,6 +57,7 @@ export const actions: Actions = {
 
 		const requestInitOptions: RequestInit = {
 			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(form.data)
 		};
 

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import AutocompleteSelect from '../AutocompleteSelect.svelte';
-	import FolderTreeSelect from '../FolderTreeSelect.svelte';
+	import CustomFieldsSection from '../CustomFieldsSection.svelte';
 	import Select from '../Select.svelte';
 	import Checkbox from '$lib/components/Forms/Checkbox.svelte';
 	import TextField from '$lib/components/Forms/TextField.svelte';
@@ -9,6 +9,7 @@
 	import Score from '$lib/components/Forms/Score.svelte';
 	import MarkdownField from '$lib/components/Forms/MarkdownField.svelte';
 	import type { SuperValidated } from 'sveltekit-superforms';
+	import { formFieldProxy } from 'sveltekit-superforms';
 	import type { ModelInfo, CacheLock } from '$lib/utils/types';
 	import { m } from '$paraglide/messages';
 	import { onMount } from 'svelte';
@@ -30,6 +31,7 @@
 		origin?: string | null;
 		initialData?: Record<string, any>;
 		context?: string;
+		object?: any;
 		rest?: Record<string, any>;
 	}
 
@@ -42,11 +44,13 @@
 		schema = {},
 		origin = null,
 		initialData = {},
-		context = 'default'
+		context = 'default',
+		object = {}
 	}: Props = $props();
 
 	// Declare form store at top level
 	const formStore = form.form;
+	const { value: folderId } = formFieldProxy(form, 'folder');
 
 	let syncMappings: Record<string, any>[] = $state(page.data?.object?.sync_mappings ?? []);
 
@@ -59,7 +63,7 @@
 	});
 
 	onMount(async () => {
-		if (!model.selectOptions) {
+		if (!Object.keys(model.selectOptions ?? {}).length) {
 			const selectOptions = {
 				status: await fetch('/applied-controls/status').then((r) => r.json()),
 				priority: await fetch('/applied-controls/priority').then((r) => r.json()),
@@ -86,6 +90,16 @@
 </script>
 
 {#if !duplicate}
+	{#if schema.shape.category}
+		<Select
+			{form}
+			options={model.selectOptions?.category}
+			field="category"
+			label={m.category()}
+			cacheLock={cacheLocks['category']}
+			bind:cachedValue={formDataCache['category']}
+		/>
+	{/if}
 	<AutocompleteSelect
 		{form}
 		multiple
@@ -143,13 +157,6 @@
 		icon="fa-solid fa-tasks"
 		header={m.projectManagement()}
 	>
-		<TextField
-			{form}
-			field="ref_id"
-			label={m.refId()}
-			cacheLock={cacheLocks['ref_id']}
-			bind:cachedValue={formDataCache['ref_id']}
-		/>
 		<Select
 			{form}
 			options={model.selectOptions?.priority}
@@ -212,7 +219,7 @@
 	>
 		<!-- Build Costs -->
 		<div class="space-y-2">
-			<h5 class="font-medium text-gray-600 my-2 py-2">{m.buildCosts()}</h5>
+			<h5 class="font-medium text-surface-600-400 my-2 py-2">{m.buildCosts()}</h5>
 			<div class="grid grid-cols-2 gap-4">
 				<NumberField
 					{form}
@@ -245,7 +252,7 @@
 
 		<!-- Run Costs -->
 		<div class="space-y-2">
-			<h5 class="font-medium text-gray-600 my-2 py-2">{m.runCosts()}</h5>
+			<h5 class="font-medium text-surface-600-400 my-2 py-2">{m.runCosts()}</h5>
 			<div class="grid grid-cols-2 gap-4">
 				<NumberField
 					{form}
@@ -273,16 +280,6 @@
 		icon="fa-solid fa-project-diagram"
 		header={m.relationships()}
 	>
-		{#if schema.shape.category}
-			<Select
-				{form}
-				options={model.selectOptions?.category}
-				field="category"
-				label={m.category()}
-				cacheLock={cacheLocks['category']}
-				bind:cachedValue={formDataCache['category']}
-			/>
-		{/if}
 		<Select
 			{form}
 			options={model.selectOptions?.csf_function}
@@ -375,6 +372,7 @@
 					{#key $formStore.integration_config}
 						<AutocompleteSelect
 							{form}
+							lazy
 							optionsEndpoint="settings/integrations/configs/{$formStore.integration_config}/remote-objects"
 							optionsLabelField="summary"
 							optionsValueField="key"
@@ -450,10 +448,6 @@
 	/>
 {/if}
 
-<FolderTreeSelect
-	{form}
-	field="folder"
-	cacheLock={cacheLocks['folder']}
-	bind:cachedValue={formDataCache['folder']}
-	label={m.domain()}
-/>
+{#if model?.name === 'appliedcontrol'}
+	<CustomFieldsSection {form} model="core.appliedcontrol" folderId={$folderId} />
+{/if}

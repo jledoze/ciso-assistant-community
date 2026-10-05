@@ -2,14 +2,12 @@
 	import { run } from 'svelte/legacy';
 
 	import { displayScoreColor } from '$lib/utils/helpers';
+	import { getLocale } from '$paraglide/runtime.js';
+	import { localizedLevelField, type ScoreLevel } from '$lib/utils/score-scales';
 	import { Progress } from '@skeletonlabs/skeleton-svelte';
 	import { formFieldProxy, type SuperForm } from 'sveltekit-superforms';
 
-	interface ScoresDefinition {
-		score: number;
-		name: string;
-		description: string;
-	}
+	type ScoresDefinition = ScoreLevel;
 
 	interface Props {
 		label?: string | undefined;
@@ -61,6 +59,13 @@
 	run(() => {
 		$value = !disabled ? ($value ?? min_score) : $value;
 	});
+
+	function localizedScoreField(
+		definition: ScoresDefinition,
+		field: 'name' | 'description' | 'description_doc'
+	) {
+		return localizedLevelField(definition, field, getLocale().split('-')[0]);
+	}
 </script>
 
 {@render left?.()}
@@ -86,6 +91,8 @@
 				{/if}
 				<input
 					data-testid="range-slider-input"
+					id={field}
+					aria-label={label}
 					name={field}
 					type="range"
 					class="input px-0"
@@ -122,11 +129,11 @@
 					{#if !disabled && scores_definition && $value !== null}
 						{#each scores_definition as definition}
 							{#if definition.score === $value}
-								<p class="font-bold">{definition.name}</p>
-								{#if isDoc && definition.description_doc}
-									{definition.description_doc}
-								{:else if definition.description}
-									{definition.description}
+								<p class="font-bold">{localizedScoreField(definition, 'name')}</p>
+								{#if isDoc && localizedScoreField(definition, 'description_doc')}
+									{localizedScoreField(definition, 'description_doc')}
+								{:else if localizedScoreField(definition, 'description')}
+									{localizedScoreField(definition, 'description')}
 								{/if}
 							{/if}
 						{/each}
@@ -135,7 +142,7 @@
 			</div>
 		</div>
 		{#if helpText}
-			<p class="text-sm text-gray-500">{helpText}</p>
+			<p class="text-sm text-surface-600-400">{helpText}</p>
 		{/if}
 	</div>
 {/if}

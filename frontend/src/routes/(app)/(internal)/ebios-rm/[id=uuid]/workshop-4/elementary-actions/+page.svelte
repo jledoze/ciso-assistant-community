@@ -6,6 +6,7 @@
 	import { m } from '$paraglide/messages';
 	import { page } from '$app/state';
 	import Anchor from '$lib/components/Anchor/Anchor.svelte';
+	import RatingKitCard from '$lib/components/EbiosRM/RatingKitCard.svelte';
 
 	import {
 		getModalStore,
@@ -46,12 +47,18 @@
 	<Anchor
 		breadcrumbAction="push"
 		href={`/ebios-rm/${data.data.id}`}
-		class="flex items-center space-x-2 text-primary-800 hover:text-primary-600"
+		class="flex items-center space-x-2 text-primary-800-200 hover:text-primary-600-400"
 	>
 		<i class="fa-solid fa-arrow-left"></i>
 		<p>{m.goBackToEbiosRmStudy()}</p>
 	</Anchor>
 </div>
+
+{#if data.ratingKit}
+	<div class="mb-4">
+		<RatingKitCard kit={data.ratingKit} advanced={data.quotationMethod === 'advanced'} />
+	</div>
+{/if}
 
 <ModelTable
 	source={data.table}
@@ -61,7 +68,7 @@
 >
 	{#snippet addButton()}
 		<div>
-			<span class="inline-flex overflow-hidden rounded-md border bg-white shadow-xs">
+			<span class="inline-flex overflow-hidden rounded-md border bg-surface-50-950 shadow-xs">
 				<button
 					class="inline-block p-3 btn-mini-primary w-12 focus:relative"
 					data-testid="add-button"

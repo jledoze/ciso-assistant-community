@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { m } from '$paraglide/messages';
 	import { getLocale } from '$paraglide/runtime';
 	import { formatDateOrDateTime } from '$lib/utils/datetime';
+	import { safeTranslate } from '$lib/utils/i18n';
 	import type { PageData } from './$types';
 
 	interface Props {
@@ -13,6 +15,151 @@
 	// Create local mutable copy of applied controls to avoid SvelteKit data reload issues
 	let appliedControls = $state([...data.applied_controls]);
 
+	// Per-swimlane totals from the aggregate endpoint. The board renders these
+	// even for swimlanes whose cards have not been fetched, so the numbers on
+	// screen are the real ones rather than "what happens to be loaded".
+	type LaneStats = {
+		folder: Record<string, any>;
+		count: number;
+		perStatus: Record<string, number>;
+	};
+	let laneStats: Record<string, LaneStats> = $state(
+		Object.fromEntries(
+			(data.counts?.results ?? []).map((entry: any) => [
+				entry.folder.id,
+				{ folder: entry.folder, count: entry.count, perStatus: { ...entry.per_status } }
+			])
+		)
+	);
+	const swimlanes = $derived(
+		Object.values(laneStats).sort((a, b) =>
+			String(a.folder.str ?? '').localeCompare(String(b.folder.str ?? ''))
+		)
+	);
+	const totalCount = $derived(Object.values(laneStats).reduce((sum, lane) => sum + lane.count, 0));
+
+	// How many cards the board is willing to render without being asked. A
+	// preloaded board is already under it; past it, swimlanes open on demand so
+	// a big board costs one aggregate request instead of one request per 200 rows.
+	const AUTO_EXPAND_BUDGET = 600;
+
+	// Smallest lanes first, so the budget buys as many open swimlanes as it can
+	// rather than being spent on one large one.
+	function lanesWithinBudget(): string[] {
+		const ordered = Object.values(laneStats).sort((a, b) => a.count - b.count);
+		const open: string[] = [];
+		let budget = AUTO_EXPAND_BUDGET;
+		for (const lane of ordered) {
+			if (lane.count > budget) break;
+			budget -= lane.count;
+			open.push(lane.folder.id);
+		}
+		return open;
+	}
+
+	// A small board arrives whole, so every swimlane is already loaded and open.
+	const initiallyOpen = data.preloaded ? Object.keys(laneStats) : lanesWithinBudget();
+
+	let loadedFolders: Set<string> = $state(new Set(data.preloaded ? Object.keys(laneStats) : []));
+	let loadingFolders: Set<string> = $state(new Set());
+	// Lanes whose fetch failed: without this a failed lane is indistinguishable
+	// from an empty one and has no way back except collapsing and reopening.
+	let failedFolders: Set<string> = $state(new Set());
+
+	// Fetch the cards for lanes the budget opened. Sequential: these are one
+	// user's page load, not a reason to open several backend slots at once.
+	onMount(async () => {
+		if (data.preloaded) return;
+		// Group the opened lanes into page-sized requests; a lane bigger than one
+		// page gets its first page here and its "load more" button for the rest.
+		let batch: string[] = [];
+		let batched = 0;
+		for (const folderId of initiallyOpen) {
+			const count = laneStats[folderId]?.count ?? 0;
+			if (batch.length > 0 && batched + count > data.pageSize) {
+				await loadLaneBatch(batch);
+				batch = [];
+				batched = 0;
+			}
+			batch.push(folderId);
+			batched += count;
+		}
+		await loadLaneBatch(batch);
+	});
+
+	function loadedCountForFolder(folderId: string): number {
+		return appliedControls.filter((control: any) => control.folder?.id === folderId).length;
+	}
+
+	async function loadFolderPage(folderId: string, offset: number) {
+		if (loadingFolders.has(folderId)) return;
+		loadingFolders = new Set(loadingFolders).add(folderId);
+		try {
+			const params = new URLSearchParams(data.filterQuery);
+			// Replaces any folder filter inherited from the list view: this request
+			// is for one swimlane, and the aggregate already excluded the rest.
+			params.set('folder', folderId);
+			params.set('offset', String(offset));
+			params.set('limit', String(data.pageSize));
+			const response = await fetch(`/${data.URLModel}?${params.toString()}`);
+			if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+			const body = await response.json();
+			const known = new Set(appliedControls.map((control: any) => control.id));
+			appliedControls = [
+				...appliedControls,
+				...(body.results ?? []).filter((row: any) => !known.has(row.id))
+			];
+			loadedFolders = new Set(loadedFolders).add(folderId);
+			const cleared = new Set(failedFolders);
+			cleared.delete(folderId);
+			failedFolders = cleared;
+		} catch (error) {
+			console.error('Error loading swimlane:', error);
+			failedFolders = new Set(failedFolders).add(folderId);
+		} finally {
+			const next = new Set(loadingFolders);
+			next.delete(folderId);
+			loadingFolders = next;
+		}
+	}
+
+	// The folder filter takes repeated values, so lanes that fit in a single page
+	// are opened with one request rather than one apiece.
+	async function loadLaneBatch(folderIds: string[]) {
+		if (folderIds.length === 0) return;
+		loadingFolders = new Set([...loadingFolders, ...folderIds]);
+		try {
+			const params = new URLSearchParams(data.filterQuery);
+			params.delete('folder');
+			for (const folderId of folderIds) params.append('folder', folderId);
+			params.set('offset', '0');
+			params.set('limit', String(data.pageSize));
+			const response = await fetch(`/${data.URLModel}?${params.toString()}`);
+			if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+			const body = await response.json();
+			const known = new Set(appliedControls.map((control: any) => control.id));
+			appliedControls = [
+				...appliedControls,
+				...(body.results ?? []).filter((row: any) => !known.has(row.id))
+			];
+			loadedFolders = new Set([...loadedFolders, ...folderIds]);
+			const cleared = new Set(failedFolders);
+			for (const folderId of folderIds) cleared.delete(folderId);
+			failedFolders = cleared;
+		} catch (error) {
+			console.error('Error loading swimlanes:', error);
+			failedFolders = new Set([...failedFolders, ...folderIds]);
+		} finally {
+			const next = new Set(loadingFolders);
+			for (const folderId of folderIds) next.delete(folderId);
+			loadingFolders = next;
+		}
+	}
+
+	function loadMore(folderId: string) {
+		void loadFolderPage(folderId, loadedCountForFolder(folderId));
+	}
+
 	// View mode toggle
 	let compactMode = $state(false);
 
@@ -21,58 +168,58 @@
 		{
 			id: '--',
 			label: '--',
-			color: 'bg-gray-100',
-			borderColor: 'border-gray-300',
-			cardAccent: 'border-l-gray-400',
-			headerText: 'text-gray-600'
+			color: 'bg-surface-200-800',
+			borderColor: 'border-surface-300-700',
+			cardAccent: 'border-l-surface-400-600',
+			headerText: 'text-surface-600-400'
 		},
 		{
 			id: 'to_do',
 			label: m.toDo(),
-			color: 'bg-blue-50',
-			borderColor: 'border-blue-300',
+			color: 'bg-blue-50 dark:bg-blue-950/40',
+			borderColor: 'border-blue-300 dark:border-blue-800',
 			cardAccent: 'border-l-blue-400',
-			headerText: 'text-blue-700'
+			headerText: 'text-blue-700 dark:text-blue-300'
 		},
 		{
 			id: 'in_progress',
 			label: m.inProgress(),
-			color: 'bg-violet-50',
-			borderColor: 'border-violet-300',
+			color: 'bg-violet-50 dark:bg-violet-950/40',
+			borderColor: 'border-violet-300 dark:border-violet-800',
 			cardAccent: 'border-l-violet-400',
-			headerText: 'text-violet-700'
+			headerText: 'text-violet-700 dark:text-violet-300'
 		},
 		{
 			id: 'on_hold',
 			label: m.onHold(),
-			color: 'bg-yellow-50',
-			borderColor: 'border-yellow-300',
+			color: 'bg-yellow-50 dark:bg-yellow-950/40',
+			borderColor: 'border-yellow-300 dark:border-yellow-800',
 			cardAccent: 'border-l-yellow-400',
-			headerText: 'text-yellow-700'
+			headerText: 'text-yellow-700 dark:text-yellow-300'
 		},
 		{
 			id: 'active',
 			label: m.active(),
-			color: 'bg-green-50',
-			borderColor: 'border-green-300',
+			color: 'bg-green-50 dark:bg-green-950/40',
+			borderColor: 'border-green-300 dark:border-green-800',
 			cardAccent: 'border-l-green-400',
-			headerText: 'text-green-700'
+			headerText: 'text-green-700 dark:text-green-300'
 		},
 		{
 			id: 'degraded',
 			label: m.degraded(),
-			color: 'bg-orange-50',
-			borderColor: 'border-orange-300',
+			color: 'bg-orange-50 dark:bg-orange-950/40',
+			borderColor: 'border-orange-300 dark:border-orange-800',
 			cardAccent: 'border-l-orange-400',
-			headerText: 'text-orange-700'
+			headerText: 'text-orange-700 dark:text-orange-300'
 		},
 		{
 			id: 'deprecated',
 			label: m.deprecated(),
-			color: 'bg-red-50',
-			borderColor: 'border-red-300',
+			color: 'bg-red-50 dark:bg-red-950/40',
+			borderColor: 'border-red-300 dark:border-red-800',
 			cardAccent: 'border-l-red-400',
-			headerText: 'text-red-700'
+			headerText: 'text-red-700 dark:text-red-300'
 		}
 	];
 
@@ -84,26 +231,26 @@
 
 	// Priority color helper (API returns "P1", "P2", etc.)
 	function getPriorityColor(priority: string | null): string {
-		if (!priority || priority === '--') return 'bg-gray-100 text-gray-600';
+		if (!priority || priority === '--') return 'bg-surface-200-800 text-surface-600-400';
 		const colorMap: Record<string, string> = {
 			P1: 'bg-red-100 text-red-800',
 			P2: 'bg-orange-100 text-orange-800',
 			P3: 'bg-yellow-100 text-yellow-800',
 			P4: 'bg-green-100 text-green-800'
 		};
-		return colorMap[priority] || 'bg-gray-100 text-gray-600';
+		return colorMap[priority] || 'bg-surface-200-800 text-surface-600-400';
 	}
 
 	// Priority flag color helper
 	function getPriorityFlagColor(priority: string | null): string {
-		if (!priority || priority === '--') return 'text-gray-400';
+		if (!priority || priority === '--') return 'text-surface-400-600';
 		const colorMap: Record<string, string> = {
 			P1: 'text-red-500',
 			P2: 'text-orange-500',
 			P3: 'text-yellow-500',
 			P4: 'text-green-500'
 		};
-		return colorMap[priority] || 'text-gray-400';
+		return colorMap[priority] || 'text-surface-400-600';
 	}
 
 	// Effort display helper
@@ -144,39 +291,24 @@
 
 	// Get count of controls per status column (across all folders)
 	function getStatusCount(statusId: string): number {
-		return appliedControls.filter((control: any) => {
-			const controlStatus = control.status || '--';
-			return controlStatus === statusId;
-		}).length;
+		return Object.values(laneStats).reduce((sum, lane) => sum + (lane.perStatus[statusId] ?? 0), 0);
 	}
 
-	// Get unique folders from applied controls
-	function getUniqueFolders() {
-		const folderMap = new Map();
-		appliedControls.forEach((control: any) => {
-			if (control.folder) {
-				folderMap.set(control.folder.id, control.folder);
-			}
-		});
-		return Array.from(folderMap.values());
-	}
-
-	// Collapsible swimlanes
-	let collapsedFolders: Set<string> = $state(new Set());
+	// Collapsible swimlanes: closed by default unless the whole board was
+	// preloaded, since opening one is what fetches its cards.
+	let collapsedFolders: Set<string> = $state(
+		new Set(Object.keys(laneStats).filter((id) => !initiallyOpen.includes(id)))
+	);
 
 	function toggleFolder(folderId: string) {
 		const next = new Set(collapsedFolders);
 		if (next.has(folderId)) {
 			next.delete(folderId);
+			if (!loadedFolders.has(folderId)) void loadFolderPage(folderId, 0);
 		} else {
 			next.add(folderId);
 		}
 		collapsedFolders = next;
-	}
-
-	// Get count of controls in a folder
-	function getFolderControlCount(folderId: string): number {
-		return appliedControls.filter((control: any) => control.folder?.id === folderId).length;
 	}
 
 	// Owner initials helper
@@ -202,6 +334,13 @@
 
 	function dropZoneKey(statusId: string, folderId: string): string {
 		return `${statusId}::${folderId}`;
+	}
+
+	function shiftLaneCount(folderId: string | null, fromStatus: string, toStatus: string) {
+		const lane = folderId ? laneStats[folderId] : undefined;
+		if (!lane || fromStatus === toStatus) return;
+		lane.perStatus[fromStatus] = Math.max(0, (lane.perStatus[fromStatus] ?? 0) - 1);
+		lane.perStatus[toStatus] = (lane.perStatus[toStatus] ?? 0) + 1;
 	}
 
 	function handleDragStart(event: DragEvent, control: any) {
@@ -269,10 +408,13 @@
 		// Optimistically update local state first for better UX
 		const controlIndex = appliedControls.findIndex((c: any) => c.id === controlToUpdate.id);
 		const previousStatus = controlIndex !== -1 ? appliedControls[controlIndex].status : null;
+		const laneId = controlToUpdate.folder?.id ?? null;
 
 		if (controlIndex !== -1) {
 			// Update status and create new array reference to trigger reactivity
 			appliedControls[controlIndex] = { ...appliedControls[controlIndex], status: statusId };
+			// The headers read the aggregate, so move the card there too.
+			shiftLaneCount(laneId, currentStatus, statusId);
 		}
 
 		try {
@@ -294,6 +436,7 @@
 					...appliedControls[controlIndex],
 					status: previousStatus
 				};
+				shiftLaneCount(laneId, statusId, previousStatus || '--');
 			}
 		}
 
@@ -305,23 +448,21 @@
 		if (!dateStr) return '--';
 		return formatDateOrDateTime(dateStr, getLocale());
 	}
-
-	const folders = $derived(getUniqueFolders());
 </script>
 
-<div class="flex flex-col h-full min-h-screen bg-gray-50 p-4">
+<div class="flex flex-col h-full min-h-screen bg-surface-100-900 p-4">
 	<!-- Header -->
 	<div class="flex justify-between items-center mb-4">
 		<a
 			href={data.backUrl}
-			class="flex items-center space-x-2 text-primary-800 hover:text-primary-600"
+			class="flex items-center space-x-2 text-primary-800-200 hover:text-primary-600-400"
 		>
 			<i class="fa-solid fa-arrow-left"></i>
-			<span>{data.backLabel}</span>
+			<span>{safeTranslate(data.backLabel)}</span>
 		</a>
 		<div class="flex items-center space-x-4">
-			<span class="text-sm text-gray-600">
-				{appliedControls.length}
+			<span class="text-sm text-surface-600-400">
+				{totalCount}
 				{m.appliedControls().toLowerCase()}
 			</span>
 			<button
@@ -329,7 +470,7 @@
 				class="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border transition-colors
 					{compactMode
 					? 'bg-primary-100 border-primary-300 text-primary-700'
-					: 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}"
+					: 'bg-surface-50-950 border-surface-300-700 text-surface-600-400 hover:bg-surface-100-900'}"
 				onclick={() => (compactMode = !compactMode)}
 				title={compactMode ? m.detailedView() : m.compactView()}
 			>
@@ -343,10 +484,10 @@
 	<div class="flex-1 overflow-auto">
 		<div class="min-w-max">
 			<!-- Column Headers -->
-			<div class="flex sticky top-0 z-10 bg-gray-50 pb-2">
+			<div class="flex sticky top-0 z-10 bg-surface-100-900 pb-2">
 				<div class="w-48 flex-shrink-0 px-2">
 					<!-- Folder column header -->
-					<div class="h-10 flex items-center font-semibold text-gray-700">
+					<div class="h-10 flex items-center font-semibold text-surface-700-300">
 						<i class="fa-solid fa-folder mr-2"></i>
 						{m.domain()}
 					</div>
@@ -359,7 +500,7 @@
 						>
 							<span>{column.label}</span>
 							<span
-								class="inline-flex items-center justify-center min-w-5 h-5 px-1.5 text-xs font-bold rounded-full bg-white/70"
+								class="inline-flex items-center justify-center min-w-5 h-5 px-1.5 text-xs font-bold rounded-full bg-surface-50-950/70"
 							>
 								{count}
 							</span>
@@ -369,40 +510,41 @@
 			</div>
 
 			<!-- Swimlanes (Folders) -->
-			{#each folders as folder}
+			{#each swimlanes as lane}
+				{@const folder = lane.folder}
 				{@const isCollapsed = collapsedFolders.has(folder.id)}
-				{@const folderCount = getFolderControlCount(folder.id)}
-				<div class="mb-2 border-b border-gray-200 pb-2">
+				{@const folderCount = lane.count}
+				<div class="mb-2 border-b border-surface-200-800 pb-2">
 					<!-- Folder Header Row (clickable to collapse) -->
 					<div class="flex">
 						<div class="w-48 flex-shrink-0 px-2">
 							<button
 								type="button"
-								class="w-full flex items-center gap-2 py-2 font-medium text-gray-700 hover:text-gray-900 text-left group"
+								class="w-full flex items-center gap-2 py-2 font-medium text-surface-700-300 hover:text-surface-900-100 text-left group"
 								onclick={() => toggleFolder(folder.id)}
 							>
 								<i
-									class="fa-solid fa-chevron-right text-xs text-gray-400 group-hover:text-gray-600 transition-transform {isCollapsed
+									class="fa-solid fa-chevron-right text-xs text-surface-400-600 group-hover:text-surface-600-400 transition-transform {isCollapsed
 										? ''
 										: 'rotate-90'}"
 								></i>
 								<span class="truncate" title={folder.str || folder.name}>
 									{folder.str || folder.name}
 								</span>
-								<span class="text-xs text-gray-400 font-normal flex-shrink-0">
+								<span class="text-xs text-surface-400-600 font-normal flex-shrink-0">
 									{folderCount}
 								</span>
 							</button>
 						</div>
 
 						{#if isCollapsed}
-							<!-- Collapsed summary: show count per status -->
+							<!-- Collapsed summary: real counts, no cards fetched yet -->
 							{#each statusColumns as column}
-								{@const controls = getControlsForFolderAndStatus(folder.id, column.id)}
+								{@const count = lane.perStatus[column.id] ?? 0}
 								<div class="w-64 flex-shrink-0 px-2 flex items-center justify-center">
-									{#if controls.length > 0}
+									{#if count > 0}
 										<span class="text-xs font-medium {column.headerText}">
-											{controls.length}
+											{count}
 										</span>
 									{/if}
 								</div>
@@ -417,6 +559,8 @@
 							<!-- Status Columns for this Folder -->
 							{#each statusColumns as column}
 								{@const controls = getControlsForFolderAndStatus(folder.id, column.id)}
+								{@const cellTotal = lane.perStatus[column.id] ?? 0}
+								{@const hiddenInCell = Math.max(0, cellTotal - controls.length)}
 								<div
 									class="w-64 flex-shrink-0 px-2"
 									ondragenter={(e) => handleDragEnter(e, column.id, folder.id)}
@@ -443,9 +587,17 @@
 											</div>
 										{/if}
 
-										{#if controls.length === 0 && !(draggedControl && dragOverStatus === column.id && dragOverFolder === folder.id)}
-											<div class="text-xs text-gray-400 text-center py-4 italic">
-												{m.noControlsInCategory()}
+										{#if loadingFolders.has(folder.id) && controls.length === 0}
+											<div class="text-center py-4">
+												<i class="fa-solid fa-spinner fa-spin text-surface-400-600"></i>
+											</div>
+										{:else if controls.length === 0 && !(draggedControl && dragOverStatus === column.id && dragOverFolder === folder.id)}
+											<div class="text-xs text-surface-400-600 text-center py-4 italic">
+												{#if hiddenInCell > 0}
+													+{hiddenInCell}
+												{:else}
+													{m.noControlsInCategory()}
+												{/if}
 											</div>
 										{:else}
 											<div class={compactMode ? 'space-y-1' : 'space-y-2'}>
@@ -454,7 +606,7 @@
 													{#if compactMode}
 														<!-- Compact card -->
 														<div
-															class="bg-white rounded px-2 py-1.5 cursor-move hover:shadow-sm transition-all border border-gray-200 border-l-[3px] {column.cardAccent} {draggedControl?.id ===
+															class="bg-surface-50-950 rounded px-2 py-1.5 cursor-move hover:shadow-sm transition-all border border-surface-200-800 border-l-[3px] {column.cardAccent} {draggedControl?.id ===
 															control.id
 																? 'opacity-40 scale-95'
 																: ''} {overdue ? 'ring-1 ring-red-300' : ''}"
@@ -476,10 +628,11 @@
 																{/if}
 																<a
 																	href="/applied-controls/{control.id}"
-																	class="text-xs text-gray-900 hover:text-primary-600 truncate flex-1"
+																	class="text-xs text-surface-900-100 hover:text-primary-600 truncate flex-1"
 																	title={control.name}
 																>
-																	{#if control.ref_id}<span class="font-mono text-gray-400 mr-1"
+																	{#if control.ref_id}<span
+																			class="font-mono text-surface-400-600 mr-1"
 																			>{control.ref_id}</span
 																		>{/if}{control.name || 'Unnamed Control'}
 																</a>
@@ -489,7 +642,9 @@
 																	></i>
 																{/if}
 																{#if control.progress_field !== null && control.progress_field !== undefined}
-																	<div class="flex-shrink-0 w-10 bg-gray-200 rounded-full h-1.5">
+																	<div
+																		class="flex-shrink-0 w-10 bg-surface-200-800 rounded-full h-1.5"
+																	>
 																		<div
 																			class="h-1.5 rounded-full {control.progress_field >= 100
 																				? 'bg-green-500'
@@ -504,7 +659,7 @@
 																	<div class="flex -space-x-1 flex-shrink-0">
 																		{#each getOwnerInitials(control.owner).slice(0, 2) as owner}
 																			<span
-																				class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-gray-200 text-gray-600 text-[9px] font-medium ring-1 ring-white"
+																				class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-surface-200-800 text-surface-600-400 text-[9px] font-medium ring-1 ring-surface-50-950"
 																				title={owner.name}
 																			>
 																				{owner.initials}
@@ -517,7 +672,7 @@
 													{:else}
 														<!-- Detailed card -->
 														<div
-															class="bg-white rounded-lg shadow-sm p-3 cursor-move hover:shadow-md transition-all border border-gray-200 border-l-[3px] {column.cardAccent} {draggedControl?.id ===
+															class="bg-surface-50-950 rounded-lg shadow-sm p-3 cursor-move hover:shadow-md transition-all border border-surface-200-800 border-l-[3px] {column.cardAccent} {draggedControl?.id ===
 															control.id
 																? 'opacity-40 scale-95'
 																: ''} {overdue ? 'ring-1 ring-red-300' : ''}"
@@ -531,13 +686,13 @@
 															<div class="flex items-start justify-between gap-2 mb-2">
 																<div class="min-w-0">
 																	{#if control.ref_id}
-																		<span class="text-[10px] font-mono text-gray-400"
+																		<span class="text-[10px] font-mono text-surface-400-600"
 																			>{control.ref_id}</span
 																		>
 																	{/if}
 																	<a
 																		href="/applied-controls/{control.id}"
-																		class="font-medium text-sm text-gray-900 hover:text-primary-600 line-clamp-2 block"
+																		class="font-medium text-sm text-surface-900-100 hover:text-primary-600 line-clamp-2 block"
 																		title={control.name}
 																	>
 																		{control.name || 'Unnamed Control'}
@@ -555,7 +710,7 @@
 															</div>
 
 															<!-- Card Details -->
-															<div class="space-y-1.5 text-xs text-gray-600">
+															<div class="space-y-1.5 text-xs text-surface-600-400">
 																<!-- Progress Bar -->
 																{#if control.progress_field !== null && control.progress_field !== undefined}
 																	<div class="flex flex-col space-y-1">
@@ -563,7 +718,7 @@
 																			<span>{m.progress()}</span>
 																			<span class="font-medium">{control.progress_field}%</span>
 																		</div>
-																		<div class="w-full bg-gray-200 rounded-full h-1.5">
+																		<div class="w-full bg-surface-200-800 rounded-full h-1.5">
 																			<div
 																				class="h-1.5 rounded-full transition-all {control.progress_field >=
 																				100
@@ -603,14 +758,14 @@
 																	<div class="flex flex-wrap gap-1">
 																		{#if control.csf_function}
 																			<span
-																				class="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px]"
+																				class="px-1.5 py-0.5 bg-surface-100-900 text-surface-600-400 rounded text-[10px]"
 																			>
 																				{control.csf_function}
 																			</span>
 																		{/if}
 																		{#if control.category}
 																			<span
-																				class="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px]"
+																				class="px-1.5 py-0.5 bg-surface-100-900 text-surface-600-400 rounded text-[10px]"
 																			>
 																				{control.category}
 																			</span>
@@ -624,7 +779,7 @@
 																	<div class="flex -space-x-1">
 																		{#each getOwnerInitials(control.owner) as owner}
 																			<span
-																				class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-200 text-gray-600 text-[10px] font-medium ring-1 ring-white"
+																				class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-surface-200-800 text-surface-600-400 text-[10px] font-medium ring-1 ring-surface-50-950"
 																				title={owner.name}
 																			>
 																				{owner.initials}
@@ -635,7 +790,7 @@
 																	<div class="flex items-center gap-1.5">
 																		{#if control.control_impact}
 																			<span
-																				class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px]"
+																				class="px-1.5 py-0.5 bg-purple-100 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 rounded text-[10px]"
 																				title={m.controlImpact()}
 																			>
 																				{getImpactDisplay(control.control_impact)}
@@ -643,7 +798,7 @@
 																		{/if}
 																		{#if control.effort}
 																			<span
-																				class="px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded text-[10px]"
+																				class="px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 rounded text-[10px]"
 																				title={m.effort()}
 																			>
 																				{getEffortDisplay(control.effort)}
@@ -655,21 +810,57 @@
 														</div>
 													{/if}
 												{/each}
+												{#if hiddenInCell > 0}
+													<p class="text-xs text-surface-400-600 text-center italic pt-1">
+														+{hiddenInCell}
+													</p>
+												{/if}
 											</div>
 										{/if}
 									</div>
 								</div>
 							{/each}
 						</div>
+						{#if loadedFolders.has(folder.id) && loadedCountForFolder(folder.id) < lane.count}
+							<div class="flex pl-48">
+								<button
+									type="button"
+									class="btn preset-tonal-surface text-xs my-1"
+									disabled={loadingFolders.has(folder.id)}
+									onclick={() => loadMore(folder.id)}
+								>
+									{#if loadingFolders.has(folder.id)}
+										<i class="fa-solid fa-spinner fa-spin mr-2"></i>
+									{/if}
+									{loadedCountForFolder(folder.id)} / {lane.count}
+								</button>
+							</div>
+						{:else if failedFolders.has(folder.id)}
+							<div class="flex pl-48">
+								<button
+									type="button"
+									class="btn preset-tonal-error text-xs my-1"
+									disabled={loadingFolders.has(folder.id)}
+									onclick={() => loadFolderPage(folder.id, loadedCountForFolder(folder.id))}
+								>
+									{#if loadingFolders.has(folder.id)}
+										<i class="fa-solid fa-spinner fa-spin mr-2"></i>
+									{:else}
+										<i class="fa-solid fa-triangle-exclamation mr-2"></i>
+									{/if}
+									{m.retry()}
+								</button>
+							</div>
+						{/if}
 					{/if}
 				</div>
 			{/each}
 
 			<!-- Empty state if no folders -->
-			{#if folders.length === 0}
-				<div class="flex items-center justify-center py-12 text-gray-500">
+			{#if swimlanes.length === 0}
+				<div class="flex items-center justify-center py-12 text-surface-600-400">
 					<div class="text-center">
-						<i class="fa-solid fa-folder-open text-4xl mb-4 text-gray-300"></i>
+						<i class="fa-solid fa-folder-open text-4xl mb-4 text-surface-300-700"></i>
 						<p>{m.noControlsInCategory()}</p>
 					</div>
 				</div>

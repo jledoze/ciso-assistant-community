@@ -25,12 +25,14 @@
 		getFieldVisibility,
 		hasComputedResult,
 		hasComputedScore,
+		resultBadgeStyle,
 		isFieldEditable as isFieldEditableHelper,
 		shouldShowAutoQuestion,
 		buildAutoAlignmentQuestion,
 		alignmentValueFromChoiceUrn,
 		choiceUrnFromAlignmentValue,
 		alignmentColorMap,
+		requirementResultOptions,
 		AUTO_ALIGNMENT_QUESTION_URN
 	} from '$lib/utils/helpers';
 	import { safeTranslate } from '$lib/utils/i18n';
@@ -50,13 +52,8 @@
 
 	let { data, form }: Props = $props();
 
-	const result_options = [
-		{ id: 'not_assessed', label: m.notAssessed() },
-		{ id: 'non_compliant', label: m.nonCompliant() },
-		{ id: 'partially_compliant', label: m.partiallyCompliant() },
-		{ id: 'compliant', label: m.compliant() },
-		{ id: 'not_applicable', label: m.notApplicable() }
-	];
+	// Full list, used for the ToC result counts; the input radio filters per-row.
+	const result_options = requirementResultOptions();
 
 	const status_options = [
 		{ id: 'to_do', label: m.toDo() },
@@ -85,6 +82,7 @@
 	const showDocumentationScore = $derived(fieldVis.showDocumentationScore);
 	const showObservation = $derived(fieldVis.showObservation);
 	const showAppliedControls = $derived(fieldVis.showAppliedControls);
+	const showTaskTemplates = $derived(fieldVis.showTaskTemplates);
 	const showEvidences = $derived(fieldVis.showEvidences);
 	const showRespondentAlignment = $derived(fieldVis.showRespondentAlignment);
 	const showComments = $derived(fieldVis.showComments);
@@ -115,6 +113,10 @@
 	const canEditDocumentationScore = $derived(isFieldEditable('documentation_score'));
 	const canEditObservation = $derived(isFieldEditable('observation'));
 	const canEditAppliedControls = $derived(isFieldEditable('applied_controls'));
+	const canEditTaskTemplates = $derived(isFieldEditable('task_templates'));
+	// The promise is the point of showing a respondent their tasks, so the panel rides
+	// along with the flag rather than needing a page they cannot reach.
+	const showCommitment = $derived(!!page.data?.featureflags?.commitment_management);
 	const canEditEvidences = $derived(isFieldEditable('evidences'));
 	const canEditAnswers = $derived(isFieldEditable('answers'));
 	const canEditAlignment = $derived(isFieldEditable('respondent_alignment'));
@@ -182,13 +184,13 @@
 						await invalidateAll();
 						toastStore.trigger({
 							message: m.statusUpdatedSuccessfully(),
-							background: 'variant-filled-success',
+							background: 'preset-filled-success-500',
 							timeout: 3000
 						});
 					} else {
 						toastStore.trigger({
 							message: result.data?.submitBody?.error || m.submissionFailed(),
-							background: 'variant-filled-error',
+							background: 'preset-filled-error-500',
 							timeout: 5000
 						});
 					}
@@ -196,7 +198,7 @@
 					console.error('Error submitting assignment:', error);
 					toastStore.trigger({
 						message: m.anErrorOccurred(),
-						background: 'variant-filled-error',
+						background: 'preset-filled-error-500',
 						timeout: 3000
 					});
 				} finally {
@@ -205,6 +207,75 @@
 			}
 		};
 		modalStore.trigger(modal);
+	}
+
+	const canReview = $derived(isAuditor && assignmentStatus === 'submitted');
+
+	async function transitionAssignment(status: string, reviewerObservation = '') {
+		isSubmitting = true;
+		try {
+			const body = new FormData();
+			body.set('status', status);
+			body.set('reviewer_observation', reviewerObservation);
+			const response = await fetch(`?/reviewAssignment`, { method: 'POST', body });
+			const result = deserialize(await response.text());
+			if (result.type === 'success' && result.data?.submitStatus === 200) {
+				await applyAction(result);
+				await invalidateAll();
+				toastStore.trigger({
+					message: m.statusUpdatedSuccessfully(),
+					background: 'preset-filled-success-500',
+					timeout: 3000
+				});
+			} else {
+				toastStore.trigger({
+					message: result.data?.submitBody?.error || m.submissionFailed(),
+					background: 'preset-filled-error-500',
+					timeout: 5000
+				});
+			}
+		} catch (error) {
+			console.error('Error transitioning assignment:', error);
+			toastStore.trigger({
+				message: m.anErrorOccurred(),
+				background: 'preset-filled-error-500',
+				timeout: 3000
+			});
+		} finally {
+			isSubmitting = false;
+		}
+	}
+
+	function handleRequestChanges() {
+		// The transition refuses without a note.
+		modalStore.trigger({
+			type: 'prompt',
+			title: m.requestChanges(),
+			body: m.reviewerObservation(),
+			value: '',
+			modalClasses: 'w-full max-w-2xl',
+			valueAttr: {
+				multiline: true,
+				rows: 6,
+				required: true,
+				placeholder: m.reviewerObservationPlaceholder()
+			},
+			response: (note: string | false) => {
+				if (note === false || !`${note ?? ''}`.trim()) return;
+				transitionAssignment('changes_requested', `${note}`.trim());
+			}
+		});
+	}
+
+	function handleCloseAssignment() {
+		modalStore.trigger({
+			type: 'confirm',
+			title: m.closeAssignment(),
+			body: m.closeAssignmentConfirm(),
+			response: (confirmed: boolean) => {
+				if (confirmed) transitionAssignment('closed');
+			}
+		});
 	}
 
 	const requirementHashmap = $derived(
@@ -313,11 +384,33 @@
 		}, 0)
 	);
 	const useQuestionProgress = $derived(showAnswers && totalQuestions > 0);
+	// Respondents track their own work: when the alignment field is in use,
+	// the fallback progress counts their alignment answers, not the results
+	// (which the auditor can set independently).
+	const useAlignmentProgress = $derived(!isAuditor && showRespondentAlignment);
+	// Mirrors the backend auto-map (alignment answer -> result) for ToC dots.
+	const alignmentResultEquivalent: Record<string, string> = {
+		yes: 'compliant',
+		no: 'non_compliant',
+		in_progress: 'partially_compliant',
+		not_applicable: 'not_applicable'
+	};
 
 	const totalAssessable = $derived(assessableItems.length);
-	const assessedCount = $derived(
-		assessableItems.filter((item) => item.data.result !== 'not_assessed').length
-	);
+	// Per-item completion, mirroring the backend auditee-dashboard rules.
+	// This page is respondent-oriented ON PURPOSE: the audit-level progress
+	// mode (status-driven / score above minimum) does NOT apply here, since
+	// respondents can neither see nor edit those fields. A question-bearing
+	// requirement completes through its answers (whether or not they compute
+	// a result), alignment-driven ones through the respondent's alignment
+	// answer, the rest through the result.
+	function isItemDone(item: { data: Record<string, any> }): boolean {
+		const visible = item.data.visible_questions ?? 0;
+		if (visible > 0) return (item.data.answered_questions ?? 0) >= visible;
+		if (useAlignmentProgress) return Boolean(item.data.respondent_alignment);
+		return item.data.result !== 'not_assessed';
+	}
+	const assessedCount = $derived(assessableItems.filter(isItemDone).length);
 	const progressPercent = $derived(
 		useQuestionProgress
 			? Math.round((answeredQuestions / totalQuestions) * 100)
@@ -426,6 +519,92 @@
 			title: safeTranslate('add-' + data.measureModel.localName)
 		};
 		modalStore.trigger(modal);
+	}
+
+	// Which task's commitment panel is open: the table stays scannable and the
+	// promise is one click away.
+	let expandedTask = $state<string | null>(null);
+
+	const REVIEW_STATES = [
+		{ id: 'changes_requested', label: m.reviewChangesRequested(), color: '#ef4444' },
+		{ id: 'resubmitted', label: m.reviewResubmitted(), color: '#f59e0b' },
+		{ id: 'accepted', label: m.reviewAccepted(), color: '#10b981' }
+	];
+	const reviewStateMeta = (state: string | null | undefined) =>
+		REVIEW_STATES.find((s) => s.id === state);
+
+	// Half-finished flags stay on the reviewer's side until the round is sent back.
+	const showReviewFlags = $derived(isAuditor || assignmentStatus !== 'submitted');
+	function goToFirstFlagged() {
+		tocFilterReview = 'changes_requested';
+		const first = tocSections.find((s) => s.reviewState === 'changes_requested');
+		if (first) goTo(first.index);
+	}
+
+	// A refused write (a locked round, a field the respondent may not set) would
+	// otherwise re-render unflagged and read as a dead button.
+	async function applied(res: Response): Promise<boolean> {
+		const result = deserialize(await res.text());
+		if (result.type === 'success') return true;
+		toastStore.trigger({
+			message: m.anErrorOccurred(),
+			background: 'preset-filled-error-500',
+			timeout: 3000
+		});
+		return false;
+	}
+
+	// One at a time: the buttons sit side by side, and two verdicts in flight land in
+	// whatever order the server finishes them.
+	let reviewPending = $state(false);
+
+	async function setReviewState(requirementAssessment: Record<string, any>, state: string) {
+		if (reviewPending) return;
+		reviewPending = true;
+		try {
+			const next = requirementAssessment.review_state === state ? '' : state;
+			const res = await fetch('?/updateRequirementAssessment', {
+				method: 'POST',
+				body: JSON.stringify({ id: requirementAssessment.id, review_state: next })
+			});
+			if (!(await applied(res))) return;
+			await invalidateAll();
+		} finally {
+			reviewPending = false;
+		}
+	}
+
+	function scrollToComments() {
+		document.getElementById('requirement-comments')?.scrollIntoView({ behavior: 'smooth' });
+	}
+
+	const taskStatusOptions = $derived(data.taskTemplateModel?.selectOptions?.status ?? []);
+
+	async function updateTaskStatus(taskId: string, status: string) {
+		const res = await fetch('?/updateTaskTemplateStatus', {
+			method: 'POST',
+			body: JSON.stringify({ id: taskId, status })
+		});
+		if (!(await applied(res))) return;
+		await invalidateAll();
+	}
+
+	function modalTaskTemplateCreateForm(createform: SuperForm<any>): void {
+		const modalComponent: ModalComponent = {
+			ref: CreateModal,
+			props: {
+				form: createform,
+				formAction: '?/createTaskTemplate',
+				invalidateAll: true,
+				model: data.taskTemplateModel,
+				debug: false
+			}
+		};
+		modalStore.trigger({
+			type: 'component',
+			component: modalComponent,
+			title: m.addTaskTemplate()
+		});
 	}
 
 	function modalEvidenceCreateForm(createform: SuperForm<any>): void {
@@ -554,6 +733,9 @@
 				id: item.data.id,
 				title,
 				result: item.data.result,
+				reviewState: item.data.review_state,
+				alignment: item.data.respondent_alignment,
+				hasVisibleQuestions: (item.data.visible_questions ?? 0) > 0,
 				questionColor: getQuestionStatus(item)
 			};
 		})
@@ -562,14 +744,30 @@
 	// ToC visibility and filtering
 	let tocCollapsed = $state(false);
 	let tocFilterResult = $state<string | null>(null);
+	let tocFilterReview = $state<string | null>(null);
 	const resultCounts = $derived(
 		result_options.map((opt) => ({
 			...opt,
 			count: tocSections.filter((s) => s.result === opt.id).length
 		}))
 	);
+	// Same entries the jump walks, so the count cannot promise a missing row.
+	const changesRequestedCount = $derived(
+		showReviewFlags ? tocSections.filter((s) => s.reviewState === 'changes_requested').length : 0
+	);
+
+	const reviewStateCounts = $derived(
+		REVIEW_STATES.map((state) => ({
+			...state,
+			count: tocSections.filter((s) => s.reviewState === state.id).length
+		}))
+	);
 	const filteredTocSections = $derived(
-		tocFilterResult ? tocSections.filter((s) => s.result === tocFilterResult) : tocSections
+		tocSections.filter(
+			(s) =>
+				(!tocFilterResult || s.result === tocFilterResult) &&
+				(!tocFilterReview || s.reviewState === tocFilterReview)
+		)
 	);
 
 	// Keyboard navigation
@@ -593,6 +791,7 @@
 
 	import { page } from '$app/state';
 	import CommentsPanel from '$lib/components/CommentsPanel/CommentsPanel.svelte';
+	import CommitmentPanel from '$lib/components/CommitmentPanel/CommitmentPanel.svelte';
 	import { onMount } from 'svelte';
 	onMount(() => {
 		document.addEventListener('keydown', handleKeydown);
@@ -605,11 +804,11 @@
 	<div
 		class="flex-shrink-0 transition-all duration-200 {tocCollapsed
 			? 'w-10'
-			: 'w-72'} sticky top-0 self-start max-h-screen overflow-y-auto border-r border-gray-200 bg-white"
+			: 'w-72'} sticky top-0 self-start max-h-screen overflow-y-auto border-r border-surface-200-800 bg-surface-50-950"
 	>
-		<div class="flex items-center justify-between p-2 border-b border-gray-100">
+		<div class="flex items-center justify-between p-2 border-b border-surface-100-900">
 			{#if !tocCollapsed}
-				<span class="text-sm font-semibold text-gray-700">{m.tableOfContents()}</span>
+				<span class="text-sm font-semibold text-surface-700-300">{m.tableOfContents()}</span>
 			{/if}
 			<button
 				class="btn btn-sm preset-tonal-surface"
@@ -619,14 +818,14 @@
 			</button>
 		</div>
 		{#if !tocCollapsed}
-			<div class="px-2 py-2 flex flex-wrap gap-1 border-b border-gray-200">
+			<div class="px-2 py-2 flex flex-wrap gap-1 border-b border-surface-200-800">
 				{#each resultCounts as opt}
 					{#if opt.count > 0}
 						<button
 							class="px-2 py-1 text-[10px] rounded transition-colors flex items-center gap-1.5
 								{tocFilterResult === opt.id
-								? 'bg-gray-700 text-white font-semibold'
-								: 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'}"
+								? 'bg-surface-700-300 text-white font-semibold'
+								: 'bg-surface-50-950 text-surface-700-300 hover:bg-surface-200-800 border border-surface-200-800'}"
 							onclick={() => (tocFilterResult = tocFilterResult === opt.id ? null : opt.id)}
 							title={opt.label}
 						>
@@ -638,12 +837,27 @@
 						</button>
 					{/if}
 				{/each}
+				{#each reviewStateCounts as state}
+					{#if state.count > 0 && showReviewFlags}
+						<button
+							class="px-2 py-1 text-[10px] rounded transition-colors flex items-center gap-1.5
+								{tocFilterReview === state.id
+								? 'bg-surface-700-300 text-white font-semibold'
+								: 'bg-surface-50-950 text-surface-700-300 hover:bg-surface-200-800 border border-surface-200-800'}"
+							onclick={() => (tocFilterReview = tocFilterReview === state.id ? null : state.id)}
+							title={state.label}
+						>
+							<i class="fa-solid fa-flag text-[9px]" style="color: {state.color};"></i>
+							{state.count}
+						</button>
+					{/if}
+				{/each}
 			</div>
 			<nav class="p-2 space-y-0.5">
 				{#each filteredTocSections as section}
 					{#if section.result === '__section__'}
 						<button
-							class="w-full text-left px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-400 mt-2 truncate
+							class="w-full text-left px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-surface-400-600 mt-2 truncate
 								{section.index === currentIndex ? 'text-primary-700' : ''}"
 							onclick={() => goTo(section.index)}
 							title={section.title}
@@ -654,8 +868,8 @@
 						<button
 							class="w-full text-left px-2 py-1.5 text-xs rounded-md transition-colors truncate flex items-center gap-1.5
 								{section.index === currentIndex
-								? 'bg-primary-100 text-primary-800 font-semibold'
-								: 'text-gray-600 hover:bg-gray-100'}"
+								? 'bg-primary-100 text-primary-800-200 font-semibold'
+								: 'text-surface-600-400 hover:bg-surface-200-800'}"
 							onclick={() => goTo(section.index)}
 							title={section.title}
 						>
@@ -663,11 +877,23 @@
 								class="inline-block w-2 h-2 rounded-full flex-shrink-0"
 								style="background-color: {section.result === '__splash__'
 									? '#a855f7'
-									: useQuestionProgress
+									: useQuestionProgress || section.hasVisibleQuestions
 										? section.questionColor
-										: (complianceResultColorMap[section.result] ?? '#d1d5db')};"
+										: useAlignmentProgress
+											? (complianceResultColorMap[
+													alignmentResultEquivalent[section.alignment] ?? ''
+												] ?? '#d1d5db')
+											: (complianceResultColorMap[section.result] ?? '#d1d5db')};"
 							></span>
 							<span class="truncate">{section.title}</span>
+							{#if showReviewFlags && reviewStateMeta(section.reviewState)}
+								{@const meta = reviewStateMeta(section.reviewState)}
+								<i
+									class="fa-solid fa-flag text-[9px] ml-auto flex-shrink-0"
+									style="color: {meta?.color};"
+									title={meta?.label}
+								></i>
+							{/if}
 						</button>
 					{/if}
 				{/each}
@@ -678,12 +904,12 @@
 	<!-- Main content -->
 	<div class="flex-1 flex flex-col space-y-4 p-4 min-w-0">
 		<!-- Header: audit name + progress -->
-		<div class="card bg-white shadow-sm px-5 py-4 border-t-[3px] border-t-primary-500">
+		<div class="card bg-surface-50-950 shadow-sm px-5 py-4 border-t-[3px] border-t-primary-500">
 			<div class="flex items-center justify-between mb-2">
 				<div class="flex items-center space-x-3">
 					<a
 						href="/auditee-dashboard"
-						class="text-primary-600 hover:text-primary-800"
+						class="text-primary-600 hover:text-primary-800-200"
 						title={m.auditDashboard()}
 					>
 						<i class="fa-solid fa-arrow-left"></i>
@@ -691,19 +917,19 @@
 					<div>
 						<h2 class="text-lg font-semibold">{complianceAssessment.name}</h2>
 						{#if complianceAssessment.framework?.name}
-							<p class="text-sm text-gray-500">
+							<p class="text-sm text-surface-600-400">
 								<i class="fa-solid fa-book mr-1"></i>{complianceAssessment.framework.name}
 							</p>
 						{/if}
 					</div>
 				</div>
-				<div class="text-sm text-gray-500">
+				<div class="text-sm text-surface-600-400">
 					{currentIndex + 1} / {navItems.length}
 				</div>
 			</div>
 			<!-- ETA / Due date -->
 			{#if complianceAssessment.eta || complianceAssessment.due_date}
-				<div class="flex items-center space-x-4 text-sm text-gray-500">
+				<div class="flex items-center space-x-4 text-sm text-surface-600-400">
 					{#if complianceAssessment.eta}
 						<span
 							><i class="fa-solid fa-calendar mr-1"></i>{m.eta()}: {complianceAssessment.eta}</span
@@ -718,13 +944,13 @@
 			{/if}
 			<!-- Progress bar -->
 			<div class="flex items-center space-x-3">
-				<div class="flex-1 bg-gray-200 rounded-full h-2">
+				<div class="flex-1 bg-surface-200-800 rounded-full h-2">
 					<div
 						class="h-2 rounded-full transition-all duration-500 ease-out"
 						style="width: {progressPercent}%; background: linear-gradient(90deg, var(--color-primary-500), var(--color-primary-400));"
 					></div>
 				</div>
-				<span class="text-sm font-medium text-gray-600 whitespace-nowrap">
+				<span class="text-sm font-medium text-surface-600-400 whitespace-nowrap">
 					{#if useQuestionProgress}
 						{answeredQuestions}/{totalQuestions} {m.questions()} ({progressPercent}%)
 					{:else}
@@ -739,7 +965,7 @@
 			<!-- Auditors see nothing here -->
 		{:else if assignmentStatus === 'submitted'}
 			<div
-				class="bg-white border border-blue-200 border-l-[3px] border-l-blue-500 rounded-lg px-5 py-3 flex items-center gap-3 shadow-sm"
+				class="bg-surface-50-950 border border-blue-200 border-l-[3px] border-l-blue-500 rounded-lg px-5 py-3 flex items-center gap-3 shadow-sm"
 			>
 				<div class="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0">
 					<i class="fa-solid fa-clock text-blue-500 text-sm"></i>
@@ -748,7 +974,7 @@
 			</div>
 		{:else if assignmentStatus === 'closed'}
 			<div
-				class="bg-white border border-green-200 border-l-[3px] border-l-emerald-500 rounded-lg px-5 py-3 flex items-center gap-3 shadow-sm"
+				class="bg-surface-50-950 border border-green-200 border-l-[3px] border-l-emerald-500 rounded-lg px-5 py-3 flex items-center gap-3 shadow-sm"
 			>
 				<div
 					class="w-8 h-8 rounded-full bg-green-50 flex items-center justify-center flex-shrink-0"
@@ -759,7 +985,7 @@
 			</div>
 		{:else if assignmentStatus === 'changes_requested'}
 			<div
-				class="bg-white border border-red-200 border-l-[3px] border-l-red-500 rounded-lg px-5 py-3 flex flex-col gap-2 shadow-sm"
+				class="bg-surface-50-950 border border-red-200 border-l-[3px] border-l-red-500 rounded-lg px-5 py-3 flex flex-col gap-2 shadow-sm"
 			>
 				<div class="flex items-center gap-3">
 					<div
@@ -775,15 +1001,26 @@
 						{reviewerObservation}
 					</div>
 				{/if}
+				{#if changesRequestedCount > 0}
+					<button
+						type="button"
+						class="ml-11 btn btn-sm preset-tonal-error w-fit"
+						onclick={goToFirstFlagged}
+					>
+						<i class="fa-solid fa-flag mr-2"></i>{m.itemsNeedingChanges({
+							count: changesRequestedCount
+						})}
+					</button>
+				{/if}
 				{#if assignment?.events?.length > 0}
 					<button
-						class="ml-11 badge bg-gray-100 text-gray-600 text-xs hover:bg-gray-200 cursor-pointer transition-colors"
+						class="ml-11 badge bg-surface-200-800 text-surface-600-400 text-xs hover:bg-surface-200-800 cursor-pointer transition-colors"
 						onclick={openHistoryModal}
 						title={m.viewHistory()}
 					>
 						<i class="fa-solid fa-clock-rotate-left mr-1"></i>
 						{m.eventsHistory()}
-						<span class="badge bg-gray-100 text-gray-500 text-[10px] ml-1"
+						<span class="badge bg-surface-200-800 text-surface-600-400 text-[10px] ml-1"
 							>{assignment.events.length}</span
 						>
 					</button>
@@ -791,14 +1028,48 @@
 			</div>
 		{:else if assignmentStatus === 'draft'}
 			<div
-				class="bg-white border border-gray-200 border-l-[3px] border-l-gray-400 rounded-lg px-5 py-3 flex items-center gap-3 shadow-sm"
+				class="bg-surface-50-950 border border-surface-200-800 border-l-[3px] border-l-gray-400 rounded-lg px-5 py-3 flex items-center gap-3 shadow-sm"
 			>
 				<div
-					class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0"
+					class="w-8 h-8 rounded-full bg-surface-200-800 flex items-center justify-center flex-shrink-0"
 				>
-					<i class="fa-solid fa-hourglass text-gray-400 text-sm"></i>
+					<i class="fa-solid fa-hourglass text-surface-400-600 text-sm"></i>
 				</div>
-				<p class="text-sm text-gray-600 font-medium">{m.assignmentAwaitingStart()}</p>
+				<p class="text-sm text-surface-600-400 font-medium">{m.assignmentAwaitingStart()}</p>
+			</div>
+		{/if}
+
+		{#if canReview}
+			<div class="flex flex-col items-end gap-2">
+				<div class="flex items-center gap-2">
+					{#if changesRequestedCount > 0}
+						<span class="text-xs text-surface-600-400">
+							<i class="fa-solid fa-flag text-red-500 mr-1"></i>{changesRequestedCount}
+							{m.itemsFlaggedForChanges()}
+						</span>
+					{/if}
+					<button
+						class="btn preset-tonal-error"
+						onclick={handleRequestChanges}
+						disabled={isSubmitting}
+						data-testid="request-changes-button"
+					>
+						<i class="fa-solid fa-rotate-left mr-2"></i>{m.requestChanges()}
+					</button>
+					<button
+						class="btn preset-filled-success-500"
+						onclick={handleCloseAssignment}
+						disabled={isSubmitting}
+						data-testid="close-assignment-button"
+					>
+						{#if isSubmitting}
+							<i class="fa-solid fa-spinner fa-spin mr-2"></i>
+						{:else}
+							<i class="fa-solid fa-check mr-2"></i>
+						{/if}
+						{m.closeAssignment()}
+					</button>
+				</div>
 			</div>
 		{/if}
 
@@ -823,7 +1094,7 @@
 		<!-- Read-only banner (only for CA-level locks, not assignment-level) -->
 		{#if complianceAssessment.is_locked || complianceAssessment.status === 'in_review'}
 			<div
-				class="bg-white border border-yellow-200 border-l-[3px] border-l-yellow-500 rounded-lg px-5 py-3 flex items-center gap-3 shadow-sm"
+				class="bg-surface-50-950 border border-yellow-200 border-l-[3px] border-l-yellow-500 rounded-lg px-5 py-3 flex items-center gap-3 shadow-sm"
 			>
 				<div
 					class="w-8 h-8 rounded-full bg-yellow-50 flex items-center justify-center flex-shrink-0"
@@ -844,14 +1115,14 @@
 				name={currentSplashNode.name}
 				description={currentSplashNode.description}
 				id="current-requirement"
-				class="card bg-white shadow-md"
+				class="card bg-surface-50-950 shadow-md"
 			/>
 		{:else if currentSectionNode}
 			<div
 				id="current-requirement"
-				class="card bg-gray-50 shadow-sm border-l-4 border-l-gray-400 px-6 py-3"
+				class="card bg-surface-100-900 shadow-sm border-l-4 border-l-gray-400 px-6 py-3"
 			>
-				<h3 class="text-lg font-semibold text-gray-700">{currentSectionNode.name}</h3>
+				<h3 class="text-lg font-semibold text-surface-700-300">{currentSectionNode.name}</h3>
 				{#if currentSectionNode.description}
 					<div class="mt-2">
 						<MarkdownRenderer content={currentSectionNode.description} />
@@ -866,19 +1137,69 @@
 				] ?? requirementAssessment}
 			<div
 				id="current-requirement"
-				class="card bg-white shadow-md border-t-[3px] border-t-orange-400 px-6 py-5 flex flex-col space-y-4"
+				class="card bg-surface-50-950 shadow-md border-t-[3px] border-t-orange-400 px-6 py-5 flex flex-col space-y-4"
 			>
 				<!-- Requirement title -->
-				<div class="flex items-start justify-between">
+				<div class="flex items-start justify-between gap-4">
 					<div>
 						<h3 class="text-xl font-semibold text-orange-600">
 							{getTitle(requirementAssessment)}
 						</h3>
 						{#if requirement.ref_id && requirement.name}
-							<p class="text-sm text-gray-500 mt-0.5">{requirement.ref_id}</p>
+							<p class="text-sm text-surface-600-400 mt-0.5">{requirement.ref_id}</p>
 						{/if}
 					</div>
+					{#if isAuditor}
+						<div class="flex items-center gap-1 flex-shrink-0">
+							<button
+								type="button"
+								class="btn btn-sm {requirementAssessment.review_state === 'changes_requested'
+									? 'preset-filled-error-500'
+									: 'preset-tonal-surface'}"
+								onclick={() => setReviewState(requirementAssessment, 'changes_requested')}
+								disabled={reviewPending}
+								title={m.requestChanges()}
+							>
+								<i class="fa-solid fa-flag mr-1"></i>{m.requestChanges()}
+							</button>
+							<button
+								type="button"
+								class="btn btn-sm {requirementAssessment.review_state === 'accepted'
+									? 'preset-filled-success-500'
+									: 'preset-tonal-surface'}"
+								onclick={() => setReviewState(requirementAssessment, 'accepted')}
+								disabled={reviewPending}
+								title={m.markAsAccepted()}
+							>
+								<i class="fa-solid fa-check"></i>
+							</button>
+						</div>
+					{:else if showReviewFlags && reviewStateMeta(requirementAssessment.review_state)}
+						{@const meta = reviewStateMeta(requirementAssessment.review_state)}
+						<span
+							class="badge text-xs flex-shrink-0"
+							style="background-color: {meta?.color}1a; color: {meta?.color};"
+						>
+							<i class="fa-solid fa-flag mr-1"></i>{meta?.label}
+						</span>
+					{/if}
 				</div>
+				{#if showReviewFlags && !isAuditor && requirementAssessment.review_state === 'changes_requested'}
+					<div
+						class="bg-red-50 border-l-[3px] border-l-red-500 rounded-md px-4 py-2 flex items-center justify-between gap-3 text-sm text-red-800"
+					>
+						<span><i class="fa-solid fa-comment-dots mr-2"></i>{m.changesRequestedItemHint()}</span>
+						{#if page.data?.featureflags?.comments && showComments}
+							<button
+								type="button"
+								class="btn btn-sm preset-tonal-error"
+								onclick={scrollToComments}
+							>
+								{m.seeComments()}
+							</button>
+						{/if}
+					</div>
+				{/if}
 
 				<!-- Description -->
 				{#if requirement.description}
@@ -1012,15 +1333,16 @@
 									{#if hasComputedResult(requirement.questions)}
 										<span
 											class="badge text-sm font-semibold"
-											style="background-color: {complianceResultColorMap[
-												requirementAssessment.result
-											] || '#ddd'}"
+											style={resultBadgeStyle(requirementAssessment.result)}
 										>
 											{safeTranslate(requirementAssessment.result)}
 										</span>
 									{:else}
 										<RadioGroup
-											possibleOptions={result_options}
+											possibleOptions={requirementResultOptions(
+												page.data.settings?.disable_partially_compliant_result,
+												requirementAssessment.result
+											)}
 											key="id"
 											labelKey="label"
 											field="result"
@@ -1223,6 +1545,148 @@
 									</Accordion.Item>
 								{/if}
 
+								<!-- Tasks -->
+								{#if showTaskTemplates}
+									<Accordion.Item value="taskTemplates">
+										<Accordion.ItemTrigger
+											class="flex w-full items-center cursor-pointer"
+											data-testid="task-templates-accordion-trigger"
+										>
+											<p class="flex flex-1 items-center space-x-2 text-left">
+												<span>{m.taskTemplates()}</span>
+												{#if requirementAssessment.task_templates != null}
+													<span class="badge preset-tonal-primary"
+														>{requirementAssessment.task_templates.length}</span
+													>
+												{/if}
+											</p>
+
+											<Accordion.ItemIndicator
+												class="transition-transform duration-200 data-[state=open]:rotate-0 data-[state=closed]:-rotate-90"
+												><svg
+													xmlns="http://www.w3.org/2000/svg"
+													width="14px"
+													height="14px"
+													viewBox="0 0 448 512"
+													><path
+														d="M201.4 374.6c12.5 12.5 32.8 12.5 45.3 0l160-160c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L224 306.7 86.6 169.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l160 160z"
+													/></svg
+												></Accordion.ItemIndicator
+											>
+										</Accordion.ItemTrigger>
+										<Accordion.ItemContent>
+											{#if canEditTaskTemplates}
+												<div class="flex flex-row space-x-2 items-center mb-2">
+													<button
+														class="btn preset-filled-primary-500 self-start"
+														type="button"
+														data-testid="add-task-template-button"
+														onclick={() =>
+															modalTaskTemplateCreateForm(
+																requirementAssessment.taskTemplateCreateForm
+															)}
+													>
+														<i class="fa-solid fa-plus mr-2"></i>{m.addTaskTemplate()}
+													</button>
+													<button
+														class="btn preset-filled-secondary-500 self-start"
+														type="button"
+														onclick={() =>
+															modalUpdateForm(requirementAssessment, 'selectTaskTemplates')}
+													>
+														<i class="fa-solid fa-hand-pointer mr-2"></i>{m.taskTemplates()}
+													</button>
+												</div>
+											{/if}
+											{#if !requirementAssessment.task_templates?.length}
+												<p class="text-sm text-surface-600-400 p-2">{m.noTaskTemplates()}</p>
+											{:else}
+												<table class="w-full text-sm">
+													<thead class="text-surface-600-400 border-b border-surface-200-800">
+														<tr>
+															<th class="text-left font-medium py-1">{m.name()}</th>
+															<th class="text-left font-medium py-1">{m.eta()}</th>
+															<th class="text-left font-medium py-1">{m.status()}</th>
+															{#if showCommitment}
+																<th class="text-left font-medium py-1">{m.commitment()}</th>
+																<th class="w-8"></th>
+															{/if}
+														</tr>
+													</thead>
+													<tbody>
+														{#each requirementAssessment.task_templates ?? [] as task}
+															<tr class="border-b border-surface-100-900">
+																<td class="py-2">
+																	<i class="fa-solid fa-list-check mr-2 text-surface-500"
+																	></i>{task.str}
+																</td>
+																<td class="py-2">{task.task_date ?? '--'}</td>
+																<td class="py-2">
+																	{#if task.status && canEditTaskTemplates}
+																		<select
+																			class="select select-sm text-xs w-36"
+																			aria-label={m.status()}
+																			value={task.status}
+																			onchange={(e) =>
+																				updateTaskStatus(task.id, e.currentTarget.value)}
+																		>
+																			{#each taskStatusOptions as option}
+																				<option value={option.value}
+																					>{safeTranslate(option.label)}</option
+																				>
+																			{/each}
+																		</select>
+																	{:else}
+																		{task.status ? safeTranslate(task.status) : '--'}
+																	{/if}
+																</td>
+																{#if showCommitment}
+																	<td class="py-2">
+																		{task.commitment_state && task.commitment_state !== '--'
+																			? safeTranslate(task.commitment_state)
+																			: '--'}
+																		{#if task.committed_eta}
+																			<span class="text-xs text-surface-600-400"
+																				>({task.committed_eta})</span
+																			>
+																		{/if}
+																	</td>
+																	<td class="py-2 text-right">
+																		<button
+																			type="button"
+																			class="btn-icon btn-icon-sm preset-tonal-surface"
+																			aria-label={m.commitment()}
+																			onclick={() =>
+																				(expandedTask = expandedTask === task.id ? null : task.id)}
+																		>
+																			<i
+																				class="fa-solid {expandedTask === task.id
+																					? 'fa-chevron-up'
+																					: 'fa-chevron-down'}"
+																			></i>
+																		</button>
+																	</td>
+																{/if}
+															</tr>
+															{#if showCommitment && expandedTask === task.id}
+																<tr>
+																	<td colspan="5" class="pb-3">
+																		<CommitmentPanel
+																			urlModel="task-templates"
+																			object={task}
+																			readOnly={!canEditTaskTemplates}
+																		/>
+																	</td>
+																</tr>
+															{/if}
+														{/each}
+													</tbody>
+												</table>
+											{/if}
+										</Accordion.ItemContent>
+									</Accordion.Item>
+								{/if}
+
 								<!-- Evidence -->
 								{#if showEvidences}
 									<Accordion.Item value="evidence">
@@ -1312,14 +1776,19 @@
 					{/key}
 				{/if}
 				{#if page.data?.featureflags?.comments && showComments}
-					<CommentsPanel parentType="requirement_assessment" parentId={requirementAssessment.id} />
+					<div id="requirement-comments">
+						<CommentsPanel
+							parentType="requirement_assessment"
+							parentId={requirementAssessment.id}
+						/>
+					</div>
 				{/if}
 			</div>
 		{/if}
 
 		<!-- Previous / Next navigation (shown for both splash and assessment items) -->
 		{#if currentSplashNode || currentItem}
-			<div class="flex items-center justify-between card bg-white shadow-sm px-5 py-3">
+			<div class="flex items-center justify-between card bg-surface-50-950 shadow-sm px-5 py-3">
 				<button
 					class="btn preset-tonal-surface"
 					disabled={currentIndex === 0}
@@ -1328,7 +1797,7 @@
 					<i class="fa-solid fa-arrow-left mr-2"></i>
 					{m.previous()}
 				</button>
-				<span class="text-sm text-gray-500">
+				<span class="text-sm text-surface-600-400">
 					{currentIndex + 1} / {navItems.length}
 				</span>
 				<button
@@ -1342,10 +1811,10 @@
 			</div>
 		{:else}
 			<div class="flex flex-col items-center justify-center py-20">
-				<div class="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center mb-5">
-					<i class="fa-solid fa-clipboard-check text-2xl text-gray-300"></i>
+				<div class="w-16 h-16 rounded-2xl bg-surface-200-800 flex items-center justify-center mb-5">
+					<i class="fa-solid fa-clipboard-check text-2xl text-surface-300-700"></i>
 				</div>
-				<p class="text-gray-400">{m.noAuditAssignments()}</p>
+				<p class="text-surface-400-600">{m.noAuditAssignments()}</p>
 			</div>
 		{/if}
 	</div>
@@ -1356,7 +1825,7 @@
 	<div class="fixed inset-0 bg-black/50 z-40" onclick={closeHistoryModal} role="presentation"></div>
 	<div class="fixed inset-0 z-50 flex items-center justify-center p-4">
 		<div
-			class="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col"
+			class="bg-surface-50-950 rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col"
 			onclick={(e) => e.stopPropagation()}
 			role="dialog"
 			aria-modal="true"
@@ -1380,7 +1849,7 @@
 			<!-- Content -->
 			<div class="p-4 overflow-y-auto flex-1">
 				<div class="mb-3">
-					<span class="text-sm text-gray-600">
+					<span class="text-sm text-surface-600-400">
 						{complianceAssessment.name}
 					</span>
 				</div>
@@ -1399,9 +1868,9 @@
 												? 'bg-blue-400'
 												: event.event_type === 'in_progress'
 													? 'bg-amber-400'
-													: 'bg-gray-300'}"
+													: 'bg-surface-300-700'}"
 								></div>
-								<div class="w-px flex-1 bg-gray-200 mt-1"></div>
+								<div class="w-px flex-1 bg-surface-200-800 mt-1"></div>
 							</div>
 							<div class="pb-3 flex-1">
 								<div class="flex items-center gap-2 text-sm">
@@ -1415,20 +1884,20 @@
 													? 'bg-blue-100 text-blue-700'
 													: event.event_type === 'in_progress'
 														? 'bg-orange-100 text-orange-700'
-														: 'bg-gray-100 text-gray-700'}"
+														: 'bg-surface-200-800 text-surface-700-300'}"
 									>
 										{safeTranslate(event.event_type)}
 									</span>
-									<span class="text-gray-500 text-xs">
+									<span class="text-surface-600-400 text-xs">
 										{formatEventActor(event.event_actor)}
 									</span>
 								</div>
-								<span class="text-gray-400 text-xs">
+								<span class="text-surface-400-600 text-xs">
 									{formatDate(new Date(event.created_at), true, getLocale())}
 								</span>
 								{#if event.event_notes}
 									<div
-										class="mt-1.5 text-sm text-gray-700 whitespace-pre-line bg-gray-50 border border-gray-100 rounded-md px-3 py-2"
+										class="mt-1.5 text-sm text-surface-700-300 whitespace-pre-line bg-surface-100-900 border border-surface-100-900 rounded-md px-3 py-2"
 									>
 										{event.event_notes}
 									</div>
@@ -1440,8 +1909,8 @@
 			</div>
 
 			<!-- Footer -->
-			<div class="p-4 border-t bg-gray-50 rounded-b-lg">
-				<button class="btn preset-filled-surface-500 w-full" onclick={closeHistoryModal}>
+			<div class="p-4 border-t bg-surface-100-900 rounded-b-lg">
+				<button class="btn preset-filled-surface-900-100 w-full" onclick={closeHistoryModal}>
 					{m.close()}
 				</button>
 			</div>

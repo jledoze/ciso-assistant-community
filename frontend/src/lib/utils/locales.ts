@@ -100,6 +100,14 @@ export const LOCALE_MAP = {
 	et: {
 		name: 'estonian',
 		flag: '🇪🇪'
+	},
+	sk: {
+		name: 'slovak',
+		flag: '🇸🇰'
+	},
+	sl: {
+		name: 'slovenian',
+		flag: '🇸🇮'
 	}
 };
 
@@ -128,7 +136,9 @@ export const language: any = {
 	chinese: m.chinese(),
 	lithuanian: m.lithuanian(),
 	korean: m.korean(),
-	estonian: m.estonian()
+	estonian: m.estonian(),
+	slovak: m.slovak(),
+	slovenian: m.slovenian()
 };
 
 export const defaultLangLabels = {
@@ -156,11 +166,27 @@ export const defaultLangLabels = {
 	zh: '简体中文',
 	lt: 'Lietuvių',
 	ko: '한국어',
-	et: 'Eesti'
+	et: 'Eesti',
+	sk: 'Slovenčina',
+	sl: 'Slovenščina'
 };
+
+/** Turn the backend's {code: name} language map into picker options, labelled
+ *  natively with the translated name alongside. */
+export function languageOptions(
+	options: { label: string; value: string | number }[] | undefined
+): { label: string; value: string }[] {
+	return (options ?? []).map((option) => {
+		const code = String(option.value) as keyof typeof defaultLangLabels;
+		const native = defaultLangLabels[code] ?? code;
+		const translated = language[LOCALE_MAP[code as keyof typeof LOCALE_MAP]?.name] ?? option.label;
+		return { value: String(option.value), label: `${native} (${translated})` };
+	});
+}
 
 export function toCamelCase(str: string) {
 	if (typeof str !== 'string') return str;
+	str = str.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim();
 	str = str.charAt(0).toLowerCase() + str.slice(1);
 	return str.replace(/[_-\s]\w/g, (match) => match.charAt(1).toUpperCase());
 }

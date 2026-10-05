@@ -1,15 +1,19 @@
 <script lang="ts">
+	import ExportModal, { type ExportGroup } from '$lib/components/Modals/ExportModal.svelte';
 	import { page } from '$app/state';
 	import CreateModal from '$lib/components/Modals/CreateModal.svelte';
 	import ModelTable from '$lib/components/ModelTable/ModelTable.svelte';
 	import RiskMatrix from '$lib/components/RiskMatrix/RiskMatrix.svelte';
 	import { URL_MODEL_MAP, getModelInfo } from '$lib/utils/crud';
+	import { listViewFields } from '$lib/utils/table';
+	import type { ListViewFilterConfig } from '$lib/utils/table';
 	import type { RiskMatrixJsonDefinition, RiskScenario } from '$lib/utils/types';
 	import Anchor from '$lib/components/Anchor/Anchor.svelte';
+	import AuditTrailButton from '$lib/components/AuditTrail/AuditTrailButton.svelte';
 	import RiskScenarioItem from '$lib/components/RiskMatrix/RiskScenarioItem.svelte';
 	import { safeTranslate } from '$lib/utils/i18n';
 	import { m } from '$paraglide/messages';
-	import { canPerformAction } from '$lib/utils/access-control';
+	import { canPerformActionOnObject } from '$lib/utils/access-control';
 	import { formatDate } from '$lib/utils/datetime';
 	import { getLocale } from '$paraglide/runtime';
 	import {
@@ -18,7 +22,7 @@
 		type ModalSettings,
 		type ModalStore
 	} from '$lib/components/Modals/stores';
-	import { Popover, Progress } from '@skeletonlabs/skeleton-svelte';
+	import { Progress } from '@skeletonlabs/skeleton-svelte';
 	import MarkdownRenderer from '$lib/components/MarkdownRenderer.svelte';
 	import List from '$lib/components/List/List.svelte';
 	import ConfirmModal from '$lib/components/Modals/ConfirmModal.svelte';
@@ -31,21 +35,33 @@
 
 	let { data, form } = $props();
 
-	let exportPopupOpen = $state(false);
-
 	const showRisks = true;
 	const useBubbles = data.useBubbles;
 	const risk_assessment = $derived(data.risk_assessment);
+
+	const scenarioTableFilters = $derived.by(() => {
+		const base = listViewFields['risk-scenarios'].filters;
+		const scope: [string, string][] = [['risk_assessment', risk_assessment.id]];
+		const withScope = (filter: ListViewFilterConfig): ListViewFilterConfig => ({
+			...filter,
+			props: { ...filter.props, optionsDetailedUrlParameters: scope }
+		});
+		return {
+			...base,
+			current_level: withScope(base.current_level),
+			residual_level: withScope(base.residual_level)
+		};
+	});
 
 	const modalStore: ModalStore = getModalStore();
 
 	const user = page.data.user;
 	const model = URL_MODEL_MAP['risk-assessments'];
-	const canEditObject: boolean = canPerformAction({
+	const canEditObject: boolean = canPerformActionOnObject({
 		user,
 		action: 'change',
 		model: model.name,
-		domain: risk_assessment.folder.id
+		object: risk_assessment
 	});
 	function modalCreateForm(): void {
 		const modalComponent: ModalComponent = {
@@ -206,6 +222,65 @@
 		'applied_controls',
 		'residual_level'
 	];
+
+	function buildExportGroups(): ExportGroup[] {
+		const id = risk_assessment.id;
+		return [
+			{
+				titleKey: 'riskAssessment',
+				options: [
+					{
+						titleKey: 'exportRiskReport',
+						descriptionKey: 'exportRiskReportDesc',
+						format: 'PDF' as const,
+						href: `/risk-assessments/${id}/export/pdf`,
+						testId: 'export-option-pdf'
+					},
+					{
+						titleKey: 'exportRiskScenariosData',
+						descriptionKey: 'exportRiskScenariosDataDesc',
+						format: 'CSV' as const,
+						href: `/risk-assessments/${id}/export/csv`,
+						testId: 'export-option-csv'
+					},
+					{
+						titleKey: 'exportRiskScenariosWorkbook',
+						descriptionKey: 'exportRiskScenariosWorkbookDesc',
+						format: 'XLSX' as const,
+						href: `/risk-assessments/${id}/export/xlsx`,
+						testId: 'export-option-xlsx'
+					}
+				]
+			},
+			{
+				titleKey: 'actionPlan',
+				options: [
+					{
+						titleKey: 'exportStatusGroupedReport',
+						descriptionKey: 'exportStatusGroupedReportDesc',
+						format: 'PDF' as const,
+						href: `/risk-assessments/${id}/action-plan/export/pdf`,
+						testId: 'export-option-ap-pdf'
+					},
+					{
+						titleKey: 'exportControlsWorkbook',
+						descriptionKey: 'exportControlsWorkbookDesc',
+						format: 'XLSX' as const,
+						href: `/risk-assessments/${id}/action-plan/export/excel`,
+						testId: 'export-option-ap-xlsx'
+					}
+				]
+			}
+		];
+	}
+
+	function modalExport(): void {
+		const modalComponent: ModalComponent = {
+			ref: ExportModal,
+			props: { title: m.exportOptionsTitle(), groups: buildExportGroups() }
+		};
+		modalStore.trigger({ type: 'component', component: modalComponent });
+	}
 </script>
 
 <main class="grow main">
@@ -221,7 +296,7 @@
 				</div>
 			</div>
 		{/if}
-		<div class="card bg-white p-4 m-4 shadow-sm flex space-x-2 relative">
+		<div class="card bg-surface-50-950 p-4 m-4 shadow-sm flex space-x-2 relative">
 			<div class="container w-1/3">
 				<div id="name" class="text-lg font-semibold" data-testid="name-field-value">
 					{#if risk_assessment.perimeter}
@@ -306,46 +381,14 @@
 			</div>
 			<div class="flex flex-col space-y-2 ml-4">
 				<div class="flex flex-row space-x-2">
-					<Popover open={exportPopupOpen} onOpenChange={(e) => (exportPopupOpen = e.open)}>
-						<Popover.Trigger class="btn preset-filled-primary-500 w-full">
-							<span data-testid="export-button">
-								<i class="fa-solid fa-download mr-2"></i>{m.exportButton()}
-							</span>
-						</Popover.Trigger>
-						<Popover.Positioner>
-							<Popover.Content>
-								<div class="card whitespace-nowrap bg-white py-2 w-fit shadow-lg space-y-1">
-									<p class="block px-4 py-2 text-sm text-gray-800">{m.riskAssessment()}</p>
-									<a
-										href="/risk-assessments/{risk_assessment.id}/export/pdf"
-										class="block px-4 py-2 text-sm text-gray-800 hover:bg-gray-200"
-										>... {m.asPDF()}</a
-									>
-									<a
-										href="/risk-assessments/{risk_assessment.id}/export/csv"
-										class="block px-4 py-2 text-sm text-gray-800 hover:bg-gray-200"
-										>... {m.asCSV()}</a
-									>
-									<a
-										href="/risk-assessments/{risk_assessment.id}/export/xlsx"
-										class="block px-4 py-2 text-sm text-gray-800 border-b hover:bg-gray-200"
-										>... {m.asXLSX()}</a
-									>
-									<p class="block px-4 py-2 text-sm text-gray-800">{m.actionPlan()}</p>
-									<a
-										href="/risk-assessments/{risk_assessment.id}/action-plan/export/pdf"
-										class="block px-4 py-2 text-sm text-gray-800 hover:bg-gray-200"
-										>... {m.asPDF()}</a
-									>
-									<a
-										href="/risk-assessments/{risk_assessment.id}/action-plan/export/excel"
-										class="block px-4 py-2 text-sm text-gray-800 border-b hover:bg-gray-200"
-										>... {m.asXLSX()}</a
-									>
-								</div>
-							</Popover.Content>
-						</Popover.Positioner>
-					</Popover>
+					<button
+						type="button"
+						class="btn preset-filled-primary-500 w-full"
+						onclick={modalExport}
+						data-testid="export-button"
+					>
+						<i class="fa-solid fa-download mr-2"></i>{m.exportButton()}
+					</button>
 					{#if canEditObject}
 						<Anchor
 							href="/risk-assessments/{risk_assessment.id}/edit?next=/risk-assessments/{risk_assessment.id}"
@@ -358,6 +401,11 @@
 						>
 					{/if}
 				</div>
+				<AuditTrailButton
+					model="risk-assessments"
+					objectId={risk_assessment.id}
+					folderId={risk_assessment.folder?.id ?? user.root_folder_id}
+				/>
 				<Anchor
 					label={m.actionPlan()}
 					href="/risk-assessments/{risk_assessment.id}/action-plan"
@@ -370,9 +418,15 @@
 					class="btn preset-filled-primary-500"
 					><i class="fa-solid fa-chart-line mr-2"></i>{m.analytics()}</Anchor
 				>
+				<Anchor
+					label={m.riskTrajectory()}
+					href="/risk-assessments/{risk_assessment.id}/trajectory"
+					class="btn preset-filled-primary-500"
+					><i class="fa-solid fa-route mr-2"></i>{m.riskTrajectory()}</Anchor
+				>
 				<span class="pt-4 font-light text-sm">{m.powerUps()}</span>
 				<button
-					class="btn text-gray-100 bg-linear-to-l from-sky-500 to-green-600"
+					class="btn text-white bg-linear-to-l from-sky-500 to-green-600"
 					onclick={(_) => modalDuplicateForm()}
 					data-testid="duplicate-button"
 				>
@@ -381,7 +435,7 @@
 				>
 				{#if !risk_assessment?.is_locked}
 					<button
-						class="btn text-gray-100 bg-linear-to-r from-cyan-500 to-blue-500 h-fit"
+						class="btn text-white bg-linear-to-r from-cyan-500 to-blue-500 h-fit"
 						onclick={async () => {
 							await modalConfirmSyncToActions(risk_assessment.id, '?/syncToActions');
 						}}
@@ -404,14 +458,14 @@
 				<Anchor
 					href="/risk-assessments/{risk_assessment.id}/convert-to-quantitative"
 					label={m.convertToQuantitative()}
-					class="btn text-gray-100 bg-linear-to-r from-purple-500 to-pink-500"
+					class="btn text-white bg-linear-to-r from-purple-500 to-pink-500"
 				>
 					<i class="fa-solid fa-calculator mr-2"></i>
 					{m.convertToQuantitative()}
 				</Anchor>
 				{#if !risk_assessment?.is_locked && page.data?.featureflags?.validation_flows}
 					<button
-						class="btn text-gray-100 bg-linear-to-r from-orange-500 to-amber-500"
+						class="btn text-white bg-linear-to-r from-orange-500 to-amber-500"
 						onclick={() => modalRequestValidation()}
 						data-testid="request-validation-button"
 					>
@@ -423,8 +477,8 @@
 		</div>
 	</div>
 	<!--Risk risk_assessment-->
-	<div class="card m-4 p-4 shadow-sm bg-white">
-		<div class="bg-white">
+	<div class="card m-4 p-4 shadow-sm bg-surface-50-950">
+		<div class="bg-surface-50-950">
 			<div class="flex flex-row justify-between">
 				<h4 class="text-lg font-semibold lowercase capitalize-first my-auto">
 					{m.associatedRiskScenarios()}
@@ -436,6 +490,7 @@
 				model={getModelInfo('risk-scenarios')}
 				URLModel="risk-scenarios"
 				search={false}
+				tableFilters={scenarioTableFilters}
 				baseEndpoint="/risk-scenarios?risk_assessment={risk_assessment.id}"
 				folderId={data.risk_assessment.folder.id}
 				{fields}
@@ -458,7 +513,7 @@
 		</div>
 	</div>
 	<!--Matrix view-->
-	<div class="card m-4 p-4 shadow-sm bg-white page-break">
+	<div class="card m-4 p-4 shadow-sm bg-surface-50-950 page-break">
 		<div class="text-lg font-semibold">{m.riskMatrixView()}</div>
 		<div class="flex flex-wrap justify-between gap-8 [&>div]:basis-xl [&>div]:grow">
 			{#if page.data?.featureflags?.inherent_risk}

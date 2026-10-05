@@ -7,10 +7,11 @@ import {
 } from '$lib/utils/actions';
 import { modelSchema } from '$lib/utils/schemas';
 import { superValidate } from 'sveltekit-superforms';
+import { loadDetail, formatSelectFieldData } from '$lib/utils/load';
 import { zod4 as zod } from 'sveltekit-superforms/adapters';
-import { loadDetail } from '$lib/utils/load';
 import type { PageServerLoad } from './$types';
 import { BASE_API_URL } from '$lib/utils/constants';
+import { fetchAllPages } from '$lib/utils/pagination';
 
 export const load: PageServerLoad = async (event) => {
 	const modelInfo = getModelInfo('incidents');
@@ -67,10 +68,7 @@ export const load: PageServerLoad = async (event) => {
 				const url = `${BASE_API_URL}/evidences/${selectField.field}/`;
 				const data = await fetchJson(url);
 				if (data) {
-					evidenceSelectOptions[selectField.field] = Object.entries(data).map(([key, value]) => ({
-						label: value,
-						value: selectField.valueType === 'number' ? parseInt(key) : key
-					}));
+					evidenceSelectOptions[selectField.field] = formatSelectFieldData(data, selectField);
 				}
 			})
 		);
@@ -83,13 +81,10 @@ export const load: PageServerLoad = async (event) => {
 	// Fetch DORA incident reports for this incident
 	let doraReports: any[] = [];
 	try {
-		const doraRes = await event.fetch(
+		doraReports = await fetchAllPages(
+			event.fetch,
 			`${BASE_API_URL}/resilience/dora-incident-reports/?incident=${event.params.id}`
 		);
-		if (doraRes.ok) {
-			const doraData = await doraRes.json();
-			doraReports = doraData.results ?? doraData ?? [];
-		}
 	} catch {
 		// DORA reports fetch is optional
 	}

@@ -85,6 +85,7 @@
 	const cBase = 'space-y-1';
 	const cSummary = 'list-none [&::-webkit-details-marker]:hidden items-center cursor-pointer flex';
 	const cSymbol = 'fill-current w-3 text-center transition-transform duration-200';
+
 	const cChildren = 'space-y-1';
 	const cDisabled = 'opacity-50 cursor-not-allowed!';
 
@@ -118,12 +119,10 @@
 		if (checked) {
 			if (index < 0) {
 				group.push(value);
-				group = group;
 			}
 		} else {
 			if (index >= 0) {
 				group.splice(index, 1);
-				group = group;
 			}
 		}
 		if (!indeterminate) onParentChange();
@@ -149,7 +148,6 @@
 				indeterminate = true;
 				if (index >= 0) {
 					group.splice(index, 1);
-					group = group;
 				}
 			} else if (
 				childrenValues.every((c) => Array.isArray(childrenGroup) && childrenGroup.includes(c))
@@ -157,7 +155,6 @@
 				indeterminate = false;
 				if (index < 0) {
 					group.push(value);
-					group = group;
 				}
 			} else if (
 				childrenValues.some((c) => Array.isArray(childrenGroup) && childrenGroup.includes(c))
@@ -165,13 +162,11 @@
 				indeterminate = true;
 				if (index >= 0) {
 					group.splice(index, 1);
-					group = group;
 				}
 			} else {
 				indeterminate = false;
 				if (index >= 0) {
 					group.splice(index, 1);
-					group = group;
 				}
 			}
 		} else {
@@ -348,7 +343,7 @@
 		<!-- Symbol -->
 		<div class="tree-summary-symbol {classesSymbol}">
 			{#if (childrenProp && !hideChildren) || alwaysDisplayCaret}
-				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512">
+				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512" fill="currentColor">
 					<path
 						d="M201.4 374.6c12.5 12.5 32.8 12.5 45.3 0l160-160c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L224 306.7 86.6 169.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l160 160z"
 					/>

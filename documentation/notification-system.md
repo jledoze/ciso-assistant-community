@@ -71,7 +71,7 @@ HUEY = {
 }
 ```
 
-Worker command: `poetry run python manage.py run_huey -w 2 -k process`
+Worker command: `uv run python manage.py run_huey -w 2 -k process`
 
 ---
 
@@ -165,6 +165,10 @@ These run daily as `@db_periodic_task` Huey tasks. They query the database, grou
 | `check_task_nodes_due_in_week` | 07:00 | TaskNode due_date = today + 7d, status `pending`/`in_progress`, template enabled. Skipped for recurrent tasks with interval < 7 days | Assigned actors | `task_node_due_soon` |
 | `check_task_nodes_due_tomorrow` | 07:05 | TaskNode due_date = today + 1d, status `pending`/`in_progress`, template enabled | Assigned actors | `task_node_due_soon` |
 | `check_task_nodes_overdue` | 07:10 | TaskNode due_date < today, status `pending`, template enabled | Assigned actors | `task_node_overdue` |
+| `check_security_exceptions_expiring_in_month` | 07:15 | SecurityException expiration_date = today + 30d, status not `resolved`/`expired`/`deprecated` | Exception owners | `security_exception_expiring_soon` |
+| `check_security_exceptions_expiring_in_week` | 07:20 | SecurityException expiration_date = today + 7d, status not `resolved`/`expired`/`deprecated` | Exception owners | `security_exception_expiring_soon` |
+| `check_security_exceptions_expiring_tomorrow` | 07:25 | SecurityException expiration_date = today + 1d, status not `resolved`/`expired`/`deprecated` | Exception owners | `security_exception_expiring_soon` |
+| `check_security_exceptions_expired` | 07:30 | SecurityException expiration_date < today, status not `resolved`/`expired`/`deprecated` | Exception owners | `expired_security_exceptions` |
 
 ### 2. Assignment Notifications (Event-Triggered)
 
@@ -178,6 +182,8 @@ These are triggered from serializer `create()` / `update()` methods when users a
 | RiskScenario owner assigned | `RiskScenarioWriteSerializer.create/update` | `send_risk_scenario_assignment_notification` | `risk_scenario_assignment` |
 | ValidationFlow created | `ValidationFlowWriteSerializer.create` | `send_validation_flow_created_notification` | `validation_flow_created` |
 | ValidationFlow status changed | `ValidationFlowWriteSerializer.update` | `send_validation_flow_updated_notification` | `validation_flow_updated` |
+| SecurityException owner assigned | `SecurityExceptionWriteSerializer.create/update` | `send_security_exception_assignment_notification` | `security_exception_assignment` |
+| SecurityException status changed | `SecurityExceptionWriteSerializer.update` | `send_security_exception_status_notification` | `security_exception_status_changed` |
 
 **Pattern for assignment notifications in serializers:**
 
@@ -205,9 +211,22 @@ def _send_assignment_notifications(self, obj, actor_ids):
         send_xxx_assignment_notification(obj.id, emails)
 ```
 
-Note: `ComplianceAssessmentWriteSerializer.update` uses `transaction.on_commit()` to defer notification until the DB transaction is committed.
+Note: `ComplianceAssessmentWriteSerializer.update` and `SecurityExceptionWriteSerializer.update` (status change) use `transaction.on_commit()` to defer notification until the DB transaction is committed. The SecurityException status notification goes to both the exception owners and its approver.
 
-### 3. Password Reset / Welcome Emails
+### 3. Requirement Assignment Review Workflow (Event-Triggered)
+
+These are triggered from a ViewSet action rather than from a serializer's `create()`/`update()`. Every call to `set_status` validates the `(from_status, to_status)` pair against `TRANSITIONS`, then `_send_transition_notification` (`backend/core/views.py:18676`) dispatches the matching task.
+
+| Transition | Task Function | Template | Recipient |
+|------------|---------------|----------|-----------|
+| `* → in_progress` | `send_assignment_activated_notification` | `assignment_activated` | Assignee |
+| `in_progress/changes_requested → submitted` | `send_assignment_submitted_notification` | `assignment_submitted` | Reviewers (falls back to authors) |
+| `submitted → closed`, `submitted → changes_requested`, `closed → submitted` | `send_assignment_reviewed_notification` (decision = `closed`/`changes_requested`/`reopened`) | `assignment_reviewed` | Assignee |
+| `in_progress → draft`, `changes_requested → draft` | `send_assignment_reopened_notification` | `assignment_reopened` | Assignee |
+
+`submitted → draft` and `closed → draft` are valid transitions but send **no** notification: the assignee had already handed the work back or finished, so a reopening only notifies when it interrupts active work (`in_progress` or `changes_requested`).
+
+### 4. Password Reset / Welcome Emails
 
 These use a separate mechanism (`User.mailing()` in `backend/iam/models.py`) with Django HTML templates instead of YAML.
 
@@ -219,7 +238,7 @@ These use a separate mechanism (`User.mailing()` in `backend/iam/models.py`) wit
 
 These emails support the **rescue (fallback) email server**. Notification emails (from `tasks.py`) currently use only the primary server.
 
-### 4. Non-Notification Periodic Tasks
+### 5. Non-Notification Periodic Tasks
 
 These tasks perform automated actions without sending emails:
 
@@ -266,10 +285,18 @@ This means assigning a Team as owner of a control can notify multiple people in 
 | `validation_deadline.yaml` | `send_validation_deadline_notification` (parametric, uses `${days}`) |
 | `task_node_due_soon.yaml` | `send_task_node_due_soon_notification` |
 | `task_node_overdue.yaml` | `send_task_node_overdue_notification` |
+| `security_exception_assignment.yaml` | `send_security_exception_assignment_notification` |
+| `security_exception_status_changed.yaml` | `send_security_exception_status_notification` |
+| `security_exception_expiring_soon.yaml` | `send_security_exception_expiring_soon_notification` |
+| `expired_security_exceptions.yaml` | `send_notification_email_expired_security_exception` |
+| `assignment_activated.yaml` | `send_assignment_activated_notification` |
+| `assignment_submitted.yaml` | `send_assignment_submitted_notification` |
+| `assignment_reviewed.yaml` | `send_assignment_reviewed_notification` |
+| `assignment_reopened.yaml` | `send_assignment_reopened_notification` |
 
 ### French (`fr/`)
 
-All English templates have a matching French translation. Both directories contain 14 templates.
+All English templates have a matching French translation. Both directories contain 18 templates.
 
 ---
 

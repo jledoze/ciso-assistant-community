@@ -2,15 +2,15 @@ import { BASE_API_URL } from '$lib/utils/constants';
 import { error, json, type NumericRange } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 
-function assertFeatureEnabled(locals: App.Locals) {
-	if (!locals.featureflags?.policy_documents) {
+async function assertFeatureEnabled(locals: App.Locals) {
+	if (!(await locals.getFeatureFlags())?.policy_documents) {
 		error(403, { message: 'Policy documents feature is disabled' });
 	}
 }
 
 // Create a policy document or upload image
 export const POST: RequestHandler = async ({ fetch, request, url, locals }) => {
-	assertFeatureEnabled(locals);
+	await assertFeatureEnabled(locals);
 
 	// Handle image uploads — read file into memory and forward as multipart
 	if (url.searchParams.get('_action') === 'upload-image') {
@@ -106,16 +106,39 @@ export const POST: RequestHandler = async ({ fetch, request, url, locals }) => {
 
 // Proxy GET requests for revisions, diffs, PDF export
 export const GET: RequestHandler = async ({ fetch, url, params, locals }) => {
-	assertFeatureEnabled(locals);
+	await assertFeatureEnabled(locals);
 
 	const action = url.searchParams.get('_action');
+
+	const req = (key: string): string => {
+		const value = url.searchParams.get(key);
+		if (!value) error(400, { message: `Missing ${key}` });
+		return value;
+	};
+
+	const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 	let endpoint: string;
 
 	switch (action) {
+		case 'references': {
+			const containerId = req('container_id');
+			if (!UUID_RE.test(containerId)) {
+				error(400, { message: 'Invalid container_id' });
+			}
+			const refRes = await fetch(`${BASE_API_URL}/document-containers/${containerId}/references/`);
+			if (!refRes.ok) {
+				error(refRes.status as NumericRange<400, 599>, await refRes.json());
+			}
+			return json(await refRes.json());
+		}
 		case 'templates': {
 			const lang = url.searchParams.get('lang') || '';
-			const templatesEndpoint = `${BASE_API_URL}/managed-documents/templates/${lang ? `?lang=${lang}` : ''}`;
+			const docType = url.searchParams.get('document_type') || '';
+			const qp = new URLSearchParams();
+			if (lang) qp.set('lang', lang);
+			if (docType) qp.set('document_type', docType);
+			const templatesEndpoint = `${BASE_API_URL}/managed-documents/templates/${qp.toString() ? `?${qp}` : ''}`;
 			const templatesRes = await fetch(templatesEndpoint);
 			if (!templatesRes.ok) {
 				error(templatesRes.status as NumericRange<400, 599>, await templatesRes.json());
@@ -123,9 +146,9 @@ export const GET: RequestHandler = async ({ fetch, url, params, locals }) => {
 			return json(await templatesRes.json());
 		}
 		case 'documents-by-locale': {
-			const locale = url.searchParams.get('locale');
-			const docsEndpoint = `${BASE_API_URL}/managed-documents/?policy=${params.id}&locale=${locale}`;
-			const docsRes = await fetch(docsEndpoint);
+			const locale = req('locale');
+			const qp = new URLSearchParams({ container__policies: params.id, locale });
+			const docsRes = await fetch(`${BASE_API_URL}/managed-documents/?${qp}`);
 			if (!docsRes.ok) {
 				error(docsRes.status as NumericRange<400, 599>, await docsRes.json());
 			}
@@ -134,40 +157,38 @@ export const GET: RequestHandler = async ({ fetch, url, params, locals }) => {
 			return json(doc);
 		}
 		case 'revisions': {
-			const documentId = url.searchParams.get('document');
-			endpoint = `${BASE_API_URL}/document-revisions/?document=${documentId}&ordering=-version_number`;
+			const documentId = req('document');
+			const qp = new URLSearchParams({ document: documentId, ordering: '-version_number' });
+			// Forward paging params so clients can fetch every revision page.
+			for (const key of ['limit', 'offset']) {
+				const value = url.searchParams.get(key);
+				if (value) qp.set(key, value);
+			}
+			endpoint = `${BASE_API_URL}/document-revisions/?${qp}`;
 			break;
 		}
 		case 'revision': {
-			const revisionId = url.searchParams.get('revision_id');
-			endpoint = `${BASE_API_URL}/document-revisions/${revisionId}/`;
+			endpoint = `${BASE_API_URL}/document-revisions/${req('revision_id')}/`;
 			break;
 		}
 		case 'diff': {
-			const revisionId = url.searchParams.get('revision_id');
-			const otherId = url.searchParams.get('other_id');
-			endpoint = `${BASE_API_URL}/document-revisions/${revisionId}/diff/${otherId}/`;
+			endpoint = `${BASE_API_URL}/document-revisions/${req('revision_id')}/diff/${req('other_id')}/`;
 			break;
 		}
 		case 'editing-status': {
-			const revisionId = url.searchParams.get('revision_id');
-			endpoint = `${BASE_API_URL}/document-revisions/${revisionId}/editing-status/`;
+			endpoint = `${BASE_API_URL}/document-revisions/${req('revision_id')}/editing-status/`;
 			break;
 		}
 		case 'edit-history': {
-			const revisionId = url.searchParams.get('revision_id');
-			endpoint = `${BASE_API_URL}/document-revisions/${revisionId}/edit-history/`;
+			endpoint = `${BASE_API_URL}/document-revisions/${req('revision_id')}/edit-history/`;
 			break;
 		}
 		case 'edit-snapshot': {
-			const revisionId = url.searchParams.get('revision_id');
-			const editId = url.searchParams.get('edit_id');
-			endpoint = `${BASE_API_URL}/document-revisions/${revisionId}/edit-snapshot/${editId}/`;
+			endpoint = `${BASE_API_URL}/document-revisions/${req('revision_id')}/edit-snapshot/${req('edit_id')}/`;
 			break;
 		}
 		case 'export-pdf': {
-			const revisionId = url.searchParams.get('revision_id');
-			endpoint = `${BASE_API_URL}/document-revisions/${revisionId}/export-pdf/`;
+			endpoint = `${BASE_API_URL}/document-revisions/${req('revision_id')}/export-pdf/`;
 			const res = await fetch(endpoint);
 			if (!res.ok) {
 				error(res.status as NumericRange<400, 599>, 'PDF export failed');
@@ -182,7 +203,7 @@ export const GET: RequestHandler = async ({ fetch, url, params, locals }) => {
 			});
 		}
 		case 'serve-image': {
-			const attachmentId = url.searchParams.get('attachment_id');
+			const attachmentId = req('attachment_id');
 			const imageEndpoint = `${BASE_API_URL}/document-attachments/${attachmentId}/file/`;
 			const res = await fetch(imageEndpoint);
 			if (!res.ok) {
@@ -198,10 +219,7 @@ export const GET: RequestHandler = async ({ fetch, url, params, locals }) => {
 			});
 		}
 		case 'edit-diff': {
-			const revisionId = url.searchParams.get('revision_id');
-			const editAId = url.searchParams.get('edit_a_id');
-			const editBId = url.searchParams.get('edit_b_id');
-			endpoint = `${BASE_API_URL}/document-revisions/${revisionId}/edit-diff/${editAId}/${editBId}/`;
+			endpoint = `${BASE_API_URL}/document-revisions/${req('revision_id')}/edit-diff/${req('edit_a_id')}/${req('edit_b_id')}/`;
 			break;
 		}
 		default:
@@ -217,7 +235,7 @@ export const GET: RequestHandler = async ({ fetch, url, params, locals }) => {
 
 // Delete a document or revision
 export const DELETE: RequestHandler = async ({ fetch, url, locals }) => {
-	assertFeatureEnabled(locals);
+	await assertFeatureEnabled(locals);
 
 	const type = url.searchParams.get('_type');
 	const id = url.searchParams.get('id');

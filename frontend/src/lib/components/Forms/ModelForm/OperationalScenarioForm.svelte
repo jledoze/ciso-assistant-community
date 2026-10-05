@@ -3,9 +3,8 @@
 	import type { ModelInfo, CacheLock } from '$lib/utils/types';
 	import Checkbox from '$lib/components/Forms/Checkbox.svelte';
 	import AutocompleteSelect from '$lib/components/Forms/AutocompleteSelect.svelte';
-	import FolderTreeSelect from '$lib/components/Forms/FolderTreeSelect.svelte';
 	import { m } from '$paraglide/messages';
-	import TextArea from '../TextArea.svelte';
+	import MarkdownField from '$lib/components/Forms/MarkdownField.svelte';
 	import Select from '../Select.svelte';
 	import { page } from '$app/state';
 	import TextField from '../TextField.svelte';
@@ -30,7 +29,7 @@
 		object = null // Optional object for additional data
 	}: Props = $props();
 
-	const activityBackground = context === 'edit' ? 'bg-white' : 'bg-surface-100-900';
+	const activityBackground = context === 'edit' ? 'bg-surface-50-950' : 'bg-surface-100-900';
 
 	let activeActivity: string | null = $state(null);
 	page.url.searchParams.forEach((value, key) => {
@@ -52,23 +51,15 @@
 	label={m.ebiosRmStudy()}
 	hidden={initialData.ebios_rm_study}
 />
-<FolderTreeSelect
-	{form}
-	field="folder"
-	cacheLock={cacheLocks['folder']}
-	bind:cachedValue={formDataCache['folder']}
-	label={m.folder()}
-	hidden
-/>
 <div
 	class="relative p-2 space-y-2 rounded-md {activeActivity === 'one'
 		? 'border-2 border-primary-500'
-		: 'border-2 border-gray-300 border-dashed'}"
+		: 'border-2 border-surface-300-700 border-dashed'}"
 >
 	<p
 		class="absolute -top-3 {activityBackground} font-bold {activeActivity === 'one'
 			? 'text-primary-500'
-			: 'text-gray-500'}"
+			: 'text-surface-600-400'}"
 	>
 		{m.activityOne()}
 	</p>
@@ -91,10 +82,24 @@
 		field="threats"
 		cacheLock={cacheLocks['threats']}
 		bind:cachedValue={formDataCache['threats']}
-		label={m.elementaryActionsTechniques()}
+		label={m.threats()}
 		helpText={m.operationalScenarioThreatsHelpText()}
 	/>
-	<TextArea
+	{#if page.data.featureflags?.ttps}
+		<AutocompleteSelect
+			{form}
+			multiple
+			lazy
+			optionsEndpoint="techniques"
+			optionsLabelField="str"
+			field="techniques"
+			cacheLock={cacheLocks['techniques']}
+			bind:cachedValue={formDataCache['techniques']}
+			label={m.techniques()}
+			helpText={m.operationalScenarioTechniquesHelpText()}
+		/>
+	{/if}
+	<MarkdownField
 		{form}
 		field="operating_modes_description"
 		label={m.operatingModesDescription()}
@@ -107,12 +112,12 @@
 <div
 	class="relative p-2 space-y-2 rounded-md {activeActivity === 'two'
 		? 'border-2 border-primary-500'
-		: 'border-2 border-gray-300 border-dashed'}"
+		: 'border-2 border-surface-300-700 border-dashed'}"
 >
 	<p
 		class="absolute -top-3 {activityBackground} font-bold {activeActivity === 'two'
 			? 'text-primary-500'
-			: 'text-gray-500'}"
+			: 'text-surface-600-400'}"
 	>
 		{m.activityTwo()}
 	</p>
@@ -126,8 +131,18 @@
 			bind:cachedValue={formDataCache['likelihood']}
 			helpText={m.likelihoodHelpText()}
 		/>
+	{:else if object.quotation_method}
+		<Select
+			{form}
+			options={(model.selectOptions?.['likelihood'] ?? []).filter((o) => o.value !== -1)}
+			field="likelihood_forced"
+			label={m.forcedLikelihood()}
+			helpText={m.forcedLikelihoodHelpText()}
+			cacheLock={cacheLocks['likelihood_forced']}
+			bind:cachedValue={formDataCache['likelihood_forced']}
+		/>
 	{/if}
-	<TextArea
+	<MarkdownField
 		{form}
 		field="justification"
 		label={m.justification()}

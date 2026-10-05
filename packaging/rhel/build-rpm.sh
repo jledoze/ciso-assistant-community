@@ -12,10 +12,11 @@ SOURCES_DIR="${SCRIPT_DIR}/SOURCES"
 # Version info
 VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null || echo 'dev')}"
 ARCH="x86_64"
+NODE_ARCH="x64"
 
 # Runtime versions
 PYTHON_VERSION="3.12.7"
-NODE_VERSION="22.11.0"
+NODE_VERSION="24.19.0"
 
 echo "======================================"
 echo "  CISO Assistant RPM Builder"
@@ -59,11 +60,11 @@ rm -rf "$PYTHON_BUILD_DIR"
 echo "[3/8] Installing Python dependencies..."
 cd "$PROJECT_ROOT/backend"
 
-# Export poetry dependencies to requirements.txt
-if command -v poetry &> /dev/null; then
-    poetry export -f requirements.txt --output "$BUILD_DIR/requirements.txt" --without-hashes
+# Export uv dependencies to requirements.txt
+if command -v uv &> /dev/null; then
+    uv export --format requirements.txt --no-hashes --no-dev -o "$BUILD_DIR/requirements.txt"
 else
-    echo "ERROR: Poetry not found. Please install poetry to build RPM."
+    echo "ERROR: uv not found. Please install uv to build RPM."
     exit 1
 fi
 
@@ -87,13 +88,13 @@ rsync -a \
 
 # Download and extract Node.js
 echo "[5/8] Downloading Node.js $NODE_VERSION..."
-NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${ARCH}.tar.xz"
+NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"
 
-if [ ! -f "$BUILD_DIR/node-v${NODE_VERSION}-linux-${ARCH}.tar.xz" ]; then
-    curl -L "$NODE_URL" -o "$BUILD_DIR/node-v${NODE_VERSION}-linux-${ARCH}.tar.xz"
+if [ ! -f "$BUILD_DIR/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" ]; then
+    curl -L "$NODE_URL" -o "$BUILD_DIR/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"
 fi
 
-tar -xf "$BUILD_DIR/node-v${NODE_VERSION}-linux-${ARCH}.tar.xz" -C "$SOURCES_DIR/node" --strip-components=1
+tar -xf "$BUILD_DIR/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -C "$SOURCES_DIR/node" --strip-components=1
 
 # Build frontend with bundled Node.js
 echo "[6/8] Building frontend application..."

@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import FolderTreeSelect from '$lib/components/Forms/FolderTreeSelect.svelte';
+	import { createPickerForm } from '$lib/components/AssetGraph/picker';
 	import AssetBoard from './AssetBoard.svelte';
 	import type { PageData } from './$types';
 
@@ -10,12 +12,12 @@
 
 	let { data }: Props = $props();
 
-	let selectedFolderId = $state(data.selectedFolderId ?? '');
+	const folderPicker = createPickerForm('folder', data.selectedFolderId || null);
 
-	function handleFolderChange() {
+	function handleFolderChange(folderId: string | null) {
 		const url = new URL(page.url);
-		if (selectedFolderId) {
-			url.searchParams.set('folder', selectedFolderId);
+		if (folderId) {
+			url.searchParams.set('folder', folderId);
 		} else {
 			url.searchParams.delete('folder');
 		}
@@ -24,28 +26,26 @@
 </script>
 
 <div class="flex flex-col h-[calc(100vh-9rem)]">
-	<div class="flex items-center gap-3 mb-3 bg-white shadow-sm rounded-base p-3">
-		<h4 class="font-bold text-surface-800">
+	<div class="flex items-center gap-3 mb-3 bg-surface-50-950 shadow-sm rounded-base p-3">
+		<h4 class="font-bold text-surface-800-200">
 			<i class="fa-solid fa-diagram-project mr-2"></i>Asset whiteboard
 		</h4>
 		<span
-			class="text-xs text-surface-500 px-2 py-0.5 rounded bg-surface-100 border border-surface-200"
+			class="text-xs text-surface-500 px-2 py-0.5 rounded bg-surface-100-900 border border-surface-200-800"
 		>
 			experimental
 		</span>
 		<div class="flex-1"></div>
-		<label class="text-sm font-medium text-surface-700" for="board-folder">Domain:</label>
-		<select
-			id="board-folder"
-			bind:value={selectedFolderId}
-			onchange={handleFolderChange}
-			class="rounded-lg border-gray-300 text-gray-700 sm:text-sm"
-		>
-			<option value="">Select a domain</option>
-			{#each data.folders as folder}
-				<option value={folder.id}>{folder.str || folder.name}</option>
-			{/each}
-		</select>
+		<span class="text-sm font-medium text-surface-700-300">Domain:</span>
+		<div class="w-80">
+			<FolderTreeSelect
+				form={folderPicker.form}
+				field="folder"
+				writePermission={null}
+				nullable
+				onChange={handleFolderChange}
+			/>
+		</div>
 	</div>
 
 	<div class="flex-1 min-h-0">
@@ -53,6 +53,8 @@
 			{#key data.selectedFolderId}
 				<AssetBoard
 					assets={data.assets}
+					externalAssets={data.externalAssets}
+					hiddenAssetIds={data.hiddenAssetIds}
 					folderId={data.selectedFolderId}
 					assetModel={data.assetModel}
 					deleteForm={data.assetDeleteForm}
@@ -60,7 +62,7 @@
 			{/key}
 		{:else}
 			<div
-				class="h-full flex items-center justify-center bg-surface-50 rounded-base border border-dashed border-surface-300 text-surface-500"
+				class="h-full flex items-center justify-center bg-surface-50-950 rounded-base border border-dashed border-surface-300-700 text-surface-500"
 			>
 				<div class="text-center">
 					<i class="fa-solid fa-diagram-project text-4xl mb-3 text-surface-300"></i>

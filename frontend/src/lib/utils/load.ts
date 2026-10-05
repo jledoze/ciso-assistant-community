@@ -1,6 +1,16 @@
 import { BASE_API_URL, UUID_REGEX } from '$lib/utils/constants';
-import { getModelInfo, urlParamModelVerboseName, type ModelMapEntry } from '$lib/utils/crud';
-import { type TableSource } from '@skeletonlabs/skeleton-svelte';
+import { formatSelectFieldData } from '$lib/utils/select-field';
+import { discardBody } from '$lib/utils/responses';
+export { formatSelectFieldData };
+import {
+	getModelInfo,
+	MODEL_FEATURE_FLAGS,
+	urlParamModelVerboseName,
+	type ModelMapEntry,
+	type SelectField,
+	type SelectFieldData
+} from '$lib/utils/crud';
+import { type TableSource } from '$lib/components/ModelTable/types';
 
 import { modelSchema, type FormDataShape } from '$lib/utils/schemas';
 import { listViewFields } from '$lib/utils/table';
@@ -20,6 +30,12 @@ interface LoadValidationFlowFormDataParams {
 	targetField: string;
 	targetIds: string[];
 }
+
+/**
+ * Format select field data received by the backend to a valid `SelectFieldData[]` list.
+ * The return value is meant to be assigned to `model.selectOptions[field]` inside load functions.
+ * The data will then be usable by components like `<AutoCompleteSelect {...} />` / `<Select {...} />`.
+ */
 
 /**
  * Load validation flow form data with preset values and select options.
@@ -51,13 +67,13 @@ export const loadValidationFlowFormData = async ({
 				const url = `${BASE_API_URL}/validation-flows/${selectField.field}/`;
 				const response = await event.fetch(url);
 				if (response.ok) {
-					validationFlowSelectOptions[selectField.field] = await response.json().then((data) =>
-						Object.entries(data).map(([key, value]) => ({
-							label: value,
-							value: selectField.valueType === 'number' ? parseInt(key) : key
-						}))
+					const responseData = await response.json();
+					validationFlowSelectOptions[selectField.field] = formatSelectFieldData(
+						responseData,
+						selectField
 					);
 				} else {
+					await discardBody(response);
 					console.error(`Failed to fetch data for ${selectField.field}: ${response.statusText}`);
 				}
 			})
@@ -73,10 +89,11 @@ export const loadDetail = async ({ event, model, id }) => {
 
 	const res = await event.fetch(endpoint);
 	if (!res.ok) {
+		await discardBody(res);
 		if (res.status === 404) {
 			// Check if focus mode is active
 			const focusFolderId = event.cookies.get('focus_folder_id');
-			const focusModeEnabled = event.locals.featureflags?.focus_mode ?? false;
+			const focusModeEnabled = (await event.locals.getFeatureFlags())?.focus_mode ?? false;
 			const isFocusModeActive = focusFolderId && focusModeEnabled;
 
 			const message = isFocusModeActive
@@ -111,27 +128,47 @@ export const loadDetail = async ({ event, model, id }) => {
 
 	if (model.reverseForeignKeyFields) {
 		const initialData = {};
+		// Hoisted: the filters below are synchronous.
+		const [featureflags, user] = await Promise.all([
+			event.locals.getFeatureFlags(),
+			event.locals.getUser()
+		]);
+		// The (app) layout redirect runs concurrently with this load, so it cannot be
+		// relied on to have happened before the folder-permission filter reads `user`.
+		if (!user) throw redirect(302, `/login?next=${event.url.pathname}`);
 		await Promise.all(
 			model.reverseForeignKeyFields
+				// Flag from the reverse FK when it declares one, else from the model.
+				.filter((m) => {
+					const flag = m?.featureFlag ?? MODEL_FEATURE_FLAGS[m.urlModel];
+					return !flag || featureflags?.[flag];
+				})
 				.filter(
 					(m) =>
 						!m?.folderPermsNeeded ||
 						canPerformAction({
-							user: event.locals.user,
+							user,
 							action: 'change',
 							model: 'folder',
 							domain:
 								model.name === 'folder'
 									? data.id
-									: (data.folder?.id ?? data.folder ?? event.locals.user.root_folder_id)
+									: (data.folder?.id ?? data.folder ?? user.root_folder_id)
 						})
 				)
 				.map(async (e) => {
 					const tableFieldsRef = listViewFields[e.urlModel];
-					const tableFields = {
-						head: [...tableFieldsRef.head],
-						body: [...tableFieldsRef.body]
-					};
+					// A table offering the column picker needs the optional columns in its head:
+					// that head is the universe the picker chooses from.
+					const tableFields = e.columnSelector
+						? {
+								head: [...tableFieldsRef.head, ...(tableFieldsRef.optionalFields?.head ?? [])],
+								body: [...tableFieldsRef.body, ...(tableFieldsRef.optionalFields?.body ?? [])]
+							}
+						: {
+								head: [...tableFieldsRef.head],
+								body: [...tableFieldsRef.body]
+							};
 					const index = tableFields.body.indexOf(e.field);
 					if (index > -1) {
 						tableFields.head.splice(index, 1);
@@ -198,31 +235,8 @@ export const loadDetail = async ({ event, model, id }) => {
 
 					const createForm = await superValidate(initialData, zod(createSchema), { errors: false });
 
+					// Filled when a create form opens: see ensureSelectOptions.
 					const selectOptions: Record<string, any> = {};
-
-					if (info.selectFields) {
-						await Promise.all(
-							info.selectFields.map(async (selectField) => {
-								let url = `${BASE_API_URL}/${info.endpointUrl || info.urlModel}/${selectField.field}/`;
-								if (selectField.formNestedField && selectField.detail === true) {
-									url = `${BASE_API_URL}/${selectField.endpointUrl}/${initialData[selectField.formNestedField]}/${selectField.field}/`;
-								}
-								const response = await event.fetch(url);
-								if (response.ok) {
-									selectOptions[selectField.field] = await response.json().then((data) =>
-										Object.entries(data).map(([key, value]) => ({
-											label: value,
-											value: selectField.valueType === 'number' ? parseInt(key) : key
-										}))
-									);
-								} else {
-									console.error(
-										`Failed to fetch data for ${selectField.field}: ${response.statusText}`
-									);
-								}
-							})
-						);
-					}
 					relatedModels[e.urlModel] = {
 						urlModel,
 						info,
@@ -260,6 +274,8 @@ export const loadDetail = async ({ event, model, id }) => {
 							if (typeof countData.count === 'number') {
 								relatedModels[e.urlModel].count = countData.count;
 							}
+						} else {
+							await discardBody(countRes);
 						}
 					} catch {
 						// Graceful degradation — leave count as undefined
@@ -284,6 +300,8 @@ export const loadDetail = async ({ event, model, id }) => {
 			const parentObject = await objectResponse.json();
 			const parentSchema = modelSchema(model.urlModel);
 			updateForm = await superValidate(parentObject, zod(parentSchema), { errors: false });
+		} else {
+			await discardBody(objectResponse);
 		}
 	}
 

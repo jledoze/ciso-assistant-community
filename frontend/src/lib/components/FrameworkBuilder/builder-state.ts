@@ -1,13 +1,8 @@
 import { getContext, setContext } from 'svelte';
 import { writable, type Writable } from 'svelte/store';
-import {
-	apiSaveDraft,
-	apiPublishDraft,
-	apiDiscardDraft,
-	apiStartEditing,
-	type DraftJSON
-} from './builder-api';
+import { apiSaveDraft, type DraftJSON } from './builder-api';
 import { m } from '$paraglide/messages';
+import { resolveComputeResult } from '$lib/utils/helpers';
 
 // --- Types ---
 
@@ -26,6 +21,18 @@ export function isSliderConfig(
 	config: Record<string, unknown> | null | undefined
 ): config is SliderConfig {
 	return !!config && (config as { widget?: unknown }).widget === 'slider';
+}
+
+/**
+ * Normalize a stored `compute_result` value into one of the four semantic
+ * options the builder UI exposes. Delegates to `resolveComputeResult` so the
+ * builder, the live edit-page compute, and the backend `resolve_compute_result`
+ * all share the same closed set of accepted values (true/false/1/0 legacy
+ * literals plus the four semantic strings). Anything else is dropped to null
+ * so a typo never silently round-trips back to the database.
+ */
+function normalizeComputeResult(value: unknown): string | null {
+	return resolveComputeResult(value);
 }
 
 export interface QuestionChoice {
@@ -56,6 +63,8 @@ export interface Question {
 	depends_on: Record<string, unknown> | null;
 	order: number;
 	weight: number;
+	/** Quick forms only: an unanswered optional question does not block submission. */
+	required?: boolean;
 	translations?: Translations | null;
 	folder: { id: string; str: string } | string;
 	requirement_node: string;
@@ -79,6 +88,9 @@ export interface RequirementNode {
 	importance: string;
 	display_mode: 'default' | 'splash';
 	translations?: Translations | null;
+	// Links to threats / reference controls: full URNs, as in the library YAML.
+	threats: string[];
+	reference_controls: string[];
 	framework: string | { id: string };
 	folder: { id: string; str: string } | string;
 }
@@ -228,6 +240,223 @@ export function generateUrn(
 	return `urn:${urnNamespace}:risk:${type}:${slug}:${refId}`;
 }
 
+/**
+ * Extract the node_id (mobile part) from a URN — everything after the 5th
+ * colon. Mirrors the backend `extract_node_id`. node_id is the framework's
+ * internal stable identifier; it must be unique per type within a framework
+ * because CEL context and `parent_urn`/`depends_on` references key on it.
+ */
+export function extractNodeId(urn: string | null | undefined): string | null {
+	if (!urn) return null;
+	const parts = urn.split(':');
+	if (parts.length <= 5) return null;
+	const id = parts.slice(5).join(':').trim();
+	return id || null;
+}
+
+/** Replace the node_id segment of a URN, preserving namespace, type and slug. */
+function withNodeId(urn: string, nodeId: string): string {
+	const parts = urn.split(':');
+	if (parts.length <= 5) return urn;
+	return [...parts.slice(0, 5), nodeId].join(':');
+}
+
+const REWRITABLE_URN_TYPES = new Set(['req_node', 'question', 'question_choice']);
+
+/**
+ * Rewrite segment 1 (namespace) and segment 4 (slug) of a rewritable child URN,
+ * preserving the node_id (segments 5+). Mirrors the backend `rewrite_child_urns`
+ * so the client and server agree on a framework's URNs after a rename.
+ */
+function rewriteUrnNsSlug(urn: string | null, newNs: string, newSlug: string): string | null {
+	if (!urn) return urn;
+	const parts = urn.split(':');
+	if (
+		parts.length >= 6 &&
+		parts[0] === 'urn' &&
+		parts[2] === 'risk' &&
+		REWRITABLE_URN_TYPES.has(parts[3])
+	) {
+		parts[1] = newNs;
+		parts[4] = newSlug;
+		return parts.join(':');
+	}
+	return urn;
+}
+
+function rewriteDependsOnUrns(
+	dependsOn: Record<string, unknown> | null | undefined,
+	newNs: string,
+	newSlug: string
+): Record<string, unknown> | null | undefined {
+	if (!dependsOn || typeof dependsOn !== 'object') return dependsOn;
+	const result: Record<string, unknown> = { ...dependsOn };
+	if (typeof result.question === 'string') {
+		result.question = rewriteUrnNsSlug(result.question, newNs, newSlug);
+	}
+	if (Array.isArray(result.answers)) {
+		result.answers = result.answers.map((a) =>
+			typeof a === 'string' ? rewriteUrnNsSlug(a, newNs, newSlug) : a
+		);
+	}
+	return result;
+}
+
+/**
+ * Rewrite every stored child URN in the builder tree to a new namespace/slug,
+ * preserving node_ids. Returns a new tree so Svelte stores react. Covers node
+ * urn + parent_urn, question urn + depends_on, and choice urn.
+ */
+function rewriteTreeUrns(nodes: BuilderNode[], newNs: string, newSlug: string): BuilderNode[] {
+	return nodes.map((bn) => ({
+		...bn,
+		node: {
+			...bn.node,
+			urn: rewriteUrnNsSlug(bn.node.urn, newNs, newSlug),
+			parent_urn: rewriteUrnNsSlug(bn.node.parent_urn, newNs, newSlug)
+		},
+		questions: bn.questions.map((bq) => ({
+			...bq,
+			question: {
+				...bq.question,
+				urn: rewriteUrnNsSlug(bq.question.urn, newNs, newSlug) ?? bq.question.urn,
+				depends_on: rewriteDependsOnUrns(bq.question.depends_on, newNs, newSlug),
+				choices: bq.question.choices.map((c) => ({
+					...c,
+					urn: rewriteUrnNsSlug(c.urn, newNs, newSlug)
+				}))
+			}
+		})),
+		children: rewriteTreeUrns(bn.children, newNs, newSlug)
+	}));
+}
+
+/**
+ * Return a node_id not present in `taken`, appending `-2`, `-3`, … to the
+ * candidate until free. Used so a new item's URN never reuses the frozen
+ * node_id of an item that was renamed or moved.
+ */
+function uniqueNodeId(candidate: string, taken: Set<string>): string {
+	if (!taken.has(candidate)) return candidate;
+	let n = 2;
+	while (taken.has(`${candidate}-${n}`)) n++;
+	return `${candidate}-${n}`;
+}
+
+/** Collect the node_ids currently used by items of a given URN type. */
+function collectNodeIds(
+	roots: BuilderNode[],
+	type: 'req_node' | 'question' | 'question_choice'
+): Set<string> {
+	const ids = new Set<string>();
+	const walk = (list: BuilderNode[]) => {
+		for (const bn of list) {
+			if (type === 'req_node') {
+				const id = extractNodeId(bn.node.urn);
+				if (id) ids.add(id);
+			} else {
+				for (const bq of bn.questions) {
+					if (type === 'question') {
+						const id = extractNodeId(bq.question.urn);
+						if (id) ids.add(id);
+					} else {
+						for (const c of bq.question.choices) {
+							const id = extractNodeId(c.urn);
+							if (id) ids.add(id);
+						}
+					}
+				}
+			}
+			walk(bn.children);
+		}
+	};
+	walk(roots);
+	return ids;
+}
+
+/**
+ * Repair requirement nodes that share a node_id (and therefore a full URN) —
+ * a corruption older drafts can carry because node_ids were frozen at creation
+ * while ref_ids could be renamed and new nodes could regenerate a freed id.
+ *
+ * Runs on the flat node list before the tree is built: the first occurrence
+ * keeps its node_id, later collisions get a fresh unique one. `parent_urn`
+ * references are intentionally left pointing at the shared URN, so any
+ * ambiguous children stay attached to the first occurrence and the renamed
+ * duplicate becomes a standalone node the user can re-place — duplicate URNs
+ * make a precise parent reattachment impossible. Returns true if anything was
+ * changed. Mutates the nodes in place.
+ */
+function repairDuplicateNodeIds(nodes: RequirementNode[]): boolean {
+	// `used` is pre-seeded with every node_id in the draft so a replacement
+	// can never collide with a later legitimate owner of that id.
+	const used = new Set<string>();
+	for (const n of nodes) {
+		const nid = extractNodeId(n.urn);
+		if (nid) used.add(nid);
+	}
+	const seen = new Set<string>();
+	let changed = false;
+	for (const n of nodes) {
+		const nid = extractNodeId(n.urn);
+		if (!nid || !n.urn) continue;
+		if (!seen.has(nid)) {
+			seen.add(nid);
+			continue;
+		}
+		// Duplicate. Prefer a node_id derived from the node's own ref_id: in
+		// the common corruption (URN drifted onto a sibling's while the ref_id
+		// stayed intact) this restores the node's ORIGINAL URN — which also
+		// matches the DB row, so the publish-time URN lock for frameworks
+		// with audits doesn't reject the repaired draft as a rename. Only
+		// URN-safe ref_ids qualify; ref_id is otherwise free text.
+		const refId = n.ref_id?.trim() ?? '';
+		const base = /^[A-Za-z0-9._-]+$/.test(refId) ? refId : nid;
+		const newNid = uniqueNodeId(base, used);
+		used.add(newNid);
+		n.urn = withNodeId(n.urn, newNid);
+		changed = true;
+	}
+	return changed;
+}
+
+/**
+ * Self-heal duplicate question / question_choice node_ids in a hydrated draft,
+ * mutating URNs in place. node_id must be unique per type (publish-time rewrite
+ * collapses divergent-slug duplicates onto one URN otherwise). The sibling of
+ * `repairDuplicateNodeIds`, which only covers requirement nodes.
+ */
+function repairDuplicateChildNodeIds(questions: Question[]): boolean {
+	let changed = false;
+
+	const dedupe = (items: { urn: string | null; ref_id: string | null }[]): void => {
+		const used = new Set<string>();
+		for (const it of items) {
+			const nid = extractNodeId(it.urn);
+			if (nid) used.add(nid);
+		}
+		const seen = new Set<string>();
+		for (const it of items) {
+			const nid = extractNodeId(it.urn);
+			if (!nid || !it.urn) continue;
+			if (!seen.has(nid)) {
+				seen.add(nid);
+				continue;
+			}
+			const refId = it.ref_id?.trim() ?? '';
+			const base = /^[A-Za-z0-9._-]+$/.test(refId) ? refId : nid;
+			const newNid = uniqueNodeId(base, used);
+			used.add(newNid);
+			it.urn = withNodeId(it.urn, newNid);
+			changed = true;
+		}
+	};
+
+	dedupe(questions);
+	dedupe(questions.flatMap((q) => q.choices));
+	return changed;
+}
+
 // --- Recursive helpers ---
 
 /** Recursively map over a requirement tree, applying fn to each requirement */
@@ -318,6 +547,20 @@ export function withTranslation(
 	return { ...current, [lang]: langDict };
 }
 
+/**
+ * Whether a requirement passes an implementation-group filter.
+ * Mirrors audit semantics (ComplianceAssessment.get_requirement_assessments):
+ * with a selection active, a requirement is kept only if its own IGs
+ * intersect the selection — requirements with no IGs are excluded.
+ */
+export function nodePassesIgFilter(
+	implementationGroups: string[] | null | undefined,
+	selected: ReadonlySet<string>
+): boolean {
+	if (selected.size === 0) return true;
+	return (implementationGroups ?? []).some((g) => selected.has(g));
+}
+
 /** Serialize a single RequirementNode into its flat persistence shape. */
 export function serializeNode(n: RequirementNode): Record<string, unknown> {
 	return {
@@ -336,6 +579,8 @@ export function serializeNode(n: RequirementNode): Record<string, unknown> {
 		weight: n.weight,
 		importance: n.importance,
 		display_mode: n.display_mode,
+		threats: n.threats ?? [],
+		reference_controls: n.reference_controls ?? [],
 		folder_id: extractFolderId(n.folder),
 		translations: n.translations ?? null
 	};
@@ -372,6 +617,7 @@ export function serializeDraft(fw: Framework, rootNodes: BuilderNode[]): DraftJS
 					depends_on: q.depends_on,
 					order: q.order,
 					weight: q.weight,
+					required: q.required ?? true,
 					requirement_node_id: extractRequirementNodeId(q.requirement_node),
 					folder_id: extractFolderId(q.folder),
 					translations: q.translations ?? null
@@ -384,7 +630,7 @@ export function serializeDraft(fw: Framework, rootNodes: BuilderNode[]): DraftJS
 						value: c.value,
 						annotation: c.annotation,
 						add_score: c.add_score,
-						compute_result: c.compute_result,
+						compute_result: normalizeComputeResult(c.compute_result),
 						order: c.order,
 						description: c.description,
 						color: c.color,
@@ -402,6 +648,9 @@ export function serializeDraft(fw: Framework, rootNodes: BuilderNode[]): DraftJS
 	walk(rootNodes);
 
 	return {
+		// Bumped when the draft shape changes incompatibly; the backend
+		// rejects drafts from a newer schema instead of crashing on them.
+		schema_version: 1,
 		framework_meta: {
 			name: fw.name,
 			description: fw.description,
@@ -466,7 +715,7 @@ export function hydrateDraft(
 			value: (c.value ?? null) as string | null,
 			annotation: (c.annotation ?? null) as string | null,
 			add_score: (c.add_score ?? null) as number | null,
-			compute_result: (c.compute_result ?? null) as string | null,
+			compute_result: normalizeComputeResult(c.compute_result),
 			order: (c.order ?? 0) as number,
 			description: (c.description ?? null) as string | null,
 			color: (c.color ?? null) as string | null,
@@ -491,6 +740,7 @@ export function hydrateDraft(
 			depends_on: (q.depends_on ?? null) as Record<string, unknown> | null,
 			order: (q.order ?? 0) as number,
 			weight: (q.weight ?? 1) as number,
+			required: (q.required ?? true) as boolean,
 			translations: (q.translations ?? null) as Translations | null,
 			folder: (q.folder_id ?? q.folder ?? '') as string,
 			requirement_node: nodeId,
@@ -515,6 +765,8 @@ export function hydrateDraft(
 		importance: (n.importance ?? '') as string,
 		display_mode: (n.display_mode ?? 'default') as 'default' | 'splash',
 		translations: (n.translations ?? null) as Translations | null,
+		threats: (n.threats ?? []) as string[],
+		reference_controls: (n.reference_controls ?? []) as string[],
 		framework: (n.framework ?? frameworkId) as string,
 		folder: (n.folder_id ?? n.folder ?? '') as string
 	}));
@@ -653,7 +905,14 @@ const CONTEXT_KEY = 'framework-builder';
 
 export type NodePreset = 'blank' | 'group' | 'requirement' | 'splash';
 
+/** What the editor is authoring: a framework tree, or a quick form whose
+ * nodes are flat pages (always assessable, no scoring or grouping vocabulary). */
+export type BuilderMode = 'framework' | 'quick_form';
+
 export interface BuilderStore {
+	/** Target of the _action protocol calls (framework id or adapter path) */
+	apiTarget: string;
+	mode: BuilderMode;
 	framework: Writable<Framework>;
 	rootNodes: Writable<BuilderNode[]>;
 	saving: Writable<boolean>;
@@ -663,6 +922,7 @@ export interface BuilderStore {
 	unsaved: Writable<boolean>;
 	unpublished: Writable<boolean>;
 	isScrolling: Writable<boolean>;
+	clearError: (key: string) => void;
 
 	addNode: (opts: { parent: string | null; preset?: NodePreset; afterIndex?: number }) => void;
 	deleteNode: (nodeId: string) => void;
@@ -670,6 +930,7 @@ export interface BuilderStore {
 	indentNode: (nodeId: string) => boolean;
 	outdentNode: (nodeId: string) => boolean;
 	toggleAssessable: (nodeId: string) => void;
+	setDisplayMode: (nodeId: string, mode: 'default' | 'splash') => void;
 
 	updateNode: (nodeId: string, patch: Record<string, unknown>) => void;
 	addQuestion: (reqNodeId: string, type?: Question['type']) => void;
@@ -688,9 +949,7 @@ export interface BuilderStore {
 	addLanguage: (lang: string) => void;
 	removeLanguage: (lang: string) => void;
 	setBaseLocale: (locale: string) => void;
-	flushDraft: () => Promise<void>;
-	publish: () => Promise<void>;
-	discard: () => Promise<void>;
+	flushDraft: () => Promise<boolean>;
 	destroy: () => void;
 }
 
@@ -703,11 +962,16 @@ export function createBuilderState(
 	frameworkData: Framework,
 	nodes: RequirementNode[],
 	questions: Question[],
-	editingDraft?: DraftJSON | null
+	editingDraft?: DraftJSON | null,
+	options?: { apiTarget?: string; mode?: BuilderMode }
 ): BuilderStore {
+	const mode: BuilderMode = options?.mode ?? 'framework';
 	const folderId =
 		typeof frameworkData.folder === 'string' ? frameworkData.folder : frameworkData.folder.id;
 	const frameworkId = frameworkData.id;
+	// Where the _action protocol calls go. Defaults to the live-framework
+	// builder proxy; the library builder passes its own adapter path.
+	const apiTarget = options?.apiTarget ?? frameworkId;
 	function getUrnNs(): string {
 		return get(framework).urn_namespace || 'custom';
 	}
@@ -734,16 +998,30 @@ export function createBuilderState(
 	}
 
 	const framework = writable<Framework>(initialFrameworkData);
+	// Self-heal drafts that carry duplicate node_ids (a corruption from older
+	// builder versions that froze node_ids at creation). Only drafts are
+	// repaired — live relational data is validated at publish time and the
+	// repair would otherwise try to rewrite published URNs. Runs on the flat
+	// list before buildTree (which keys children by parent_urn and would
+	// otherwise duplicate subtrees under colliding URNs). Marked
+	// unsaved/unpublished so it persists on the next save or publish.
+	// Run both repairs (array avoids `||` short-circuiting the second).
+	const didRepairNodeIds = editingDraft
+		? [repairDuplicateNodeIds(initialNodes), repairDuplicateChildNodeIds(initialQuestions)].some(
+				Boolean
+			)
+		: false;
 	const initialRootNodes = buildTree(initialNodes, initialQuestions);
 	const rootNodes = writable<BuilderNode[]>(initialRootNodes);
 	const saving = writable(false);
 	const errors = writable<Map<string, string>>(new Map());
 	const activeSection = writable<string>(initialRootNodes[0]?.node.id ?? '');
 	const hasPendingFlush = writable(false);
-	const unsaved = writable(false); // local edits not yet saved to draft
+	// A node_id repair produces local edits not yet saved to the draft.
+	const unsaved = writable(didRepairNodeIds); // local edits not yet saved to draft
 	// Check if the draft was marked dirty by a prior save-draft call
 	const draftMarkedDirty = editingDraft && (editingDraft as any)._dirty === true;
-	const unpublished = writable(!!draftMarkedDirty);
+	const unpublished = writable(!!draftMarkedDirty || didRepairNodeIds);
 	const isScrolling = writable(false);
 	const activeLanguage = writable<string | null>(null);
 
@@ -782,91 +1060,33 @@ export function createBuilderState(
 
 	// --- Draft save (explicit, triggered by Save button) ---
 
-	let saveInFlight = false;
+	let currentSave: Promise<boolean> | null = null;
 
 	async function flushDraft(): Promise<boolean> {
-		if (saveInFlight) return false;
-		saveInFlight = true;
-		saving.set(true);
-		try {
-			const draft = serializeDraft(get(framework), get(rootNodes));
-			(draft as any)._dirty = true; // mark draft as having user changes
-			await apiSaveDraft(frameworkId, draft);
-			unsaved.set(false); // saved to draft, but still unpublished
-			clearError('save-draft');
-			return true;
-		} catch (e) {
-			setError('save-draft', (e as Error).message);
-			return false;
-		} finally {
-			saving.set(false);
-			saveInFlight = false;
-		}
-	}
-
-	/** Validate all nodes and framework before publish. Returns true if valid. */
-	function validateBeforePublish(): boolean {
-		const validationErrors = validateDraft(get(framework), get(rootNodes));
-		for (const err of validationErrors) {
-			setError(err.key, err.message);
-		}
-		return validationErrors.length === 0;
-	}
-
-	async function publish() {
-		const saved = await flushDraft();
-		if (!saved) {
-			setError('publish', m.builderFailedToSaveDraftBeforePublish());
-			return;
-		}
-
-		// Clear previous node- and question-level validation errors so stale
-		// entries (e.g. slider min/max/step errors from the previous attempt)
-		// don't survive a re-validation.
-		errors.update((prev) => {
-			const next = new Map(prev);
-			for (const key of next.keys()) {
-				if (key.startsWith('node-') || key.startsWith('question-')) next.delete(key);
+		// Coalesce concurrent calls: a publish clicked while a Ctrl+S save is
+		// still in flight must await that save's outcome rather than fail.
+		if (currentSave) return currentSave;
+		currentSave = (async () => {
+			saving.set(true);
+			try {
+				const draft = serializeDraft(get(framework), get(rootNodes));
+				(draft as any)._dirty = true; // mark draft as having user changes
+				await apiSaveDraft(apiTarget, draft);
+				unsaved.set(false); // saved to draft, but still unpublished
+				clearError('save-draft');
+				return true;
+			} catch (e) {
+				console.error('[FrameworkBuilder] Draft save failed:', e);
+				setError('save-draft', (e as Error).message);
+				return false;
+			} finally {
+				saving.set(false);
 			}
-			return next;
-		});
-		clearError('publish');
-
-		if (!validateBeforePublish()) {
-			return;
-		}
-
+		})();
 		try {
-			await apiPublishDraft(frameworkId);
-			// Reflect the server-side bump locally so reactive status (e.g.,
-			// "Live" vs "Draft — nothing live yet") updates without a refresh.
-			framework.update((f) => ({ ...f, editing_version: (f.editing_version ?? 1) + 1 }));
-			clearError('publish');
-		} catch (e) {
-			setError('publish', (e as Error).message);
-			throw e;
-		}
-	}
-
-	async function discard() {
-		try {
-			// Clear the draft on the server
-			await apiDiscardDraft(frameworkId);
-			// Re-create a fresh draft from live relational data
-			const { draft: freshDraft } = await apiStartEditing(frameworkId);
-			// Re-hydrate stores from the fresh draft
-			const hydrated = hydrateDraft(freshDraft, frameworkId);
-			const freshFramework = { ...frameworkData, ...hydrated.frameworkPatch } as Framework;
-			const freshRootNodes = buildTree(hydrated.nodes, hydrated.questions);
-			framework.set(freshFramework);
-			rootNodes.set(freshRootNodes);
-			activeSection.set(freshRootNodes[0]?.node.id ?? '');
-			unsaved.set(false);
-			unpublished.set(false);
-			clearError('discard');
-		} catch (e) {
-			setError('discard', (e as Error).message);
-			throw e;
+			return await currentSave;
+		} finally {
+			currentSave = null;
 		}
 	}
 
@@ -898,7 +1118,8 @@ export function createBuilderState(
 
 		const roots = get(rootNodes);
 		let parentBn: BuilderNode | null = null;
-		if (opts.parent) {
+		// Flat pages: a parent would nest one page under another.
+		if (opts.parent && mode !== 'quick_form') {
 			for (const r of roots) {
 				const found = findRequirement([r], opts.parent);
 				if (found) {
@@ -915,24 +1136,29 @@ export function createBuilderState(
 		const parentRefId = parentBn?.node.ref_id ?? null;
 		const siblingRefIds = siblings.map((s) => s.node.ref_id);
 		const refId = computeRefId(siblingRefIds, parentRefId, parentBn ? 'requirement' : 'section');
+		// node_id must be unique across the whole framework (not just siblings),
+		// otherwise it can clash with a node that was renamed or moved away.
+		const nodeId = uniqueNodeId(refId, collectNodeIds(get(rootNodes), 'req_node'));
 
 		const newId = crypto.randomUUID();
 		const newNode: RequirementNode = {
 			id: newId,
-			urn: generateUrn('req_node', getFwSlug(), refId, getUrnNs()),
+			urn: generateUrn('req_node', getFwSlug(), nodeId, getUrnNs()),
 			ref_id: refId,
 			name: null,
 			description: null,
 			annotation: null,
 			parent_urn: parentBn?.node.urn ?? null,
 			order_id: order,
-			assessable: defaults.assessable,
+			assessable: mode === 'quick_form' ? true : defaults.assessable,
 			implementation_groups: null,
 			visibility_expression: null,
 			typical_evidence: null,
 			weight: 1,
 			importance: '',
 			display_mode: defaults.display_mode,
+			threats: [],
+			reference_controls: [],
 			framework: frameworkId,
 			folder: folderId
 		};
@@ -1004,6 +1230,8 @@ export function createBuilderState(
 	 * Returns true if the tree was mutated.
 	 */
 	function indentNode(nodeId: string): boolean {
+		// Quick-form pages are a flat list, not a tree.
+		if (mode === 'quick_form') return false;
 		let changed = false;
 		rootNodes.update((tree) => {
 			function recurse(list: BuilderNode[]): BuilderNode[] {
@@ -1047,6 +1275,7 @@ export function createBuilderState(
 	 * Returns true if the tree was mutated.
 	 */
 	function outdentNode(nodeId: string): boolean {
+		if (mode === 'quick_form') return false;
 		let changed = false;
 		rootNodes.update((tree) => {
 			// Phase 1: locate the node's parent chain
@@ -1145,6 +1374,8 @@ export function createBuilderState(
 	 * Toggle the `assessable` flag on a node.
 	 */
 	function toggleAssessable(nodeId: string) {
+		// Quick-form pages are created assessable and stay that way.
+		if (mode === 'quick_form') return;
 		// Find current value across the full tree (including roots)
 		let current: boolean | null = null;
 		const roots = get(rootNodes);
@@ -1161,6 +1392,18 @@ export function createBuilderState(
 		findAssessable(roots);
 		if (current === null) return;
 		updateNode(nodeId, { assessable: !current });
+	}
+
+	/**
+	 * Change a node's display mode. Splash screens are never assessable, so
+	 * switching to splash also clears the flag (the assessable checkbox is
+	 * hidden in splash mode and a stale true would be invisible).
+	 */
+	function setDisplayMode(nodeId: string, mode: 'default' | 'splash') {
+		updateNode(
+			nodeId,
+			mode === 'splash' ? { display_mode: mode, assessable: false } : { display_mode: mode }
+		);
 	}
 
 	// --- Node update ---
@@ -1190,7 +1433,8 @@ export function createBuilderState(
 		const parentRefId = req.node.ref_id ?? null;
 		const siblingRefIds = req.questions.map((bq) => bq.question.ref_id);
 		const refId = computeRefId(siblingRefIds, parentRefId, 'question');
-		const urn = generateUrn('question', getFwSlug(), refId, getUrnNs());
+		const nodeId = uniqueNodeId(refId, collectNodeIds(get(rootNodes), 'question'));
+		const urn = generateUrn('question', getFwSlug(), nodeId, getUrnNs());
 
 		const newQuestion: Question = {
 			id: newId,
@@ -1203,6 +1447,7 @@ export function createBuilderState(
 			depends_on: null,
 			order,
 			weight: 1,
+			required: true,
 			folder: folderId,
 			requirement_node: reqNodeId,
 			choices: []
@@ -1252,10 +1497,11 @@ export function createBuilderState(
 		const parentRefId = q.question.ref_id ?? null;
 		const siblingRefIds = q.question.choices.map((c) => c.ref_id);
 		const refId = computeRefId(siblingRefIds, parentRefId, 'choice');
+		const nodeId = uniqueNodeId(refId, collectNodeIds(get(rootNodes), 'question_choice'));
 
 		const newChoice: QuestionChoice = {
 			id: newId,
-			urn: generateUrn('question_choice', getFwSlug(), refId, getUrnNs()),
+			urn: generateUrn('question_choice', getFwSlug(), nodeId, getUrnNs()),
 			ref_id: refId,
 			value: '',
 			annotation: null,
@@ -1369,7 +1615,20 @@ export function createBuilderState(
 	}
 
 	function doUpdateFramework(patch: Record<string, unknown>) {
+		const oldNs = get(framework).urn_namespace || 'custom';
+		const oldSlug = getFwSlug();
 		framework.update((f) => ({ ...f, ...patch }) as Framework);
+		const newNs = getUrnNs();
+		const newSlug = getFwSlug();
+		// A namespace / ref_id change (or a name change while ref_id is empty,
+		// since the slug is name-derived then) must propagate to every stored
+		// child URN — mirroring the backend rewrite on publish. Without this the
+		// draft carries mixed slugs: stale URNs in the UI, and a publish-time
+		// rewrite that can collapse two of them onto one URN. Skipped once
+		// compliance assessments exist, when URNs are locked.
+		if ((newNs !== oldNs || newSlug !== oldSlug) && !get(framework).has_compliance_assessments) {
+			rootNodes.update((nodes) => rewriteTreeUrns(nodes, newNs, newSlug));
+		}
 		markDirty();
 	}
 
@@ -1699,6 +1958,8 @@ export function createBuilderState(
 	}
 
 	return {
+		apiTarget,
+		mode,
 		framework,
 		rootNodes,
 		saving,
@@ -1708,6 +1969,7 @@ export function createBuilderState(
 		unsaved,
 		unpublished,
 		isScrolling,
+		clearError,
 
 		addNode,
 		deleteNode,
@@ -1715,6 +1977,7 @@ export function createBuilderState(
 		indentNode,
 		outdentNode,
 		toggleAssessable,
+		setDisplayMode,
 
 		updateNode,
 		addQuestion,
@@ -1734,8 +1997,6 @@ export function createBuilderState(
 		removeLanguage,
 		setBaseLocale,
 		flushDraft,
-		publish,
-		discard,
 		destroy
 	};
 }

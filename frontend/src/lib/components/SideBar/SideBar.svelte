@@ -242,9 +242,18 @@
 			type: 'component',
 			component: modalComponent,
 			title: m.firstTimeLoginModalTitle(),
-			body: m.firstTimeLoginModalDescription()
+			body: m.firstTimeLoginModalDescription(),
+			response: dismissOnboarding
 		};
 		modalStore.trigger(modal);
+	}
+
+	function dismissOnboarding(): void {
+		if (user?.preferences?.ui?.onboarding_dismissed) return;
+		fetch('/fe-api/user-preferences', {
+			method: 'PATCH',
+			body: JSON.stringify({ ui: { onboarding_dismissed: true } })
+		});
 	}
 
 	const loading = writable(false);
@@ -292,7 +301,9 @@
 
 	onMount(() => {
 		const showFirstLoginModal =
-			getCookie('show_first_login_modal') === 'true' && user.accessible_domains.length === 0;
+			getCookie('show_first_login_modal') === 'true' &&
+			!user.preferences?.ui?.onboarding_dismissed &&
+			user.accessible_domains.length === 0;
 		// NOTE: For now, there is only a single guided tour, which is targeted at an administrator.
 		// Later, we will have tours for domain managers, analysts etc.
 		if (showFirstLoginModal && user.is_admin) {
@@ -318,22 +329,24 @@
 			open
 		)}"
 	>
-		<nav class="flex-1 flex flex-col overflow-y-auto overflow-x-hidden bg-gray-50 py-4 px-3">
+		<nav class="flex-1 flex flex-col overflow-y-auto overflow-x-hidden bg-surface-50-950 py-4 px-3">
 			<SideBarHeader />
 			<SideBarNavigation {sideBarVisibleItems} />
 			<SideBarFooter on:getStarted={modalFirstLogin} />
 		</nav>
 	</aside>
 	{#if $loading}
-		<div class="fixed inset-0 flex items-center justify-center bg-gray-50 bg-opacity-60 z-1000">
-			<div class="flex flex-col items-center space-y-4 p-6 rounded-lg bg-white shadow-lg">
+		<div
+			class="fixed inset-0 flex items-center justify-center bg-surface-50-950 bg-opacity-60 z-1000"
+		>
+			<div class="flex flex-col items-center space-y-4 p-6 rounded-lg bg-surface-50-950 shadow-lg">
 				<LoadingSpinner />
 
-				<p class="text-sm text-gray-700 font-medium text-center">
+				<p class="text-sm text-surface-700-300 font-medium text-center">
 					{m.importingDemoData()}
 				</p>
 
-				<p class="text-xs text-gray-500 text-center max-w-xs">
+				<p class="text-xs text-surface-600-400 text-center max-w-xs">
 					{m.demoEnvironmentBeingPrepared()}
 				</p>
 			</div>

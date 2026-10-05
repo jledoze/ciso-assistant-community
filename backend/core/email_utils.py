@@ -3,7 +3,6 @@ Email template utilities for CISO Assistant
 """
 
 import re
-import yaml
 import markdown
 from pathlib import Path
 from string import Template
@@ -11,6 +10,7 @@ from typing import Dict, Optional
 from django.conf import settings
 from django.utils.html import escape as html_escape
 from django.utils.translation import get_language
+from core.utils import yaml_safe_load
 from global_settings.models import GlobalSettings
 from iam.models import User
 import structlog
@@ -29,6 +29,50 @@ class MarkdownSafe(str):
 
 
 TEMPLATE_BASE_PATH = Path(__file__).parent / "templates" / "emails"
+
+_DAY_UNITS = {
+    "de": ("Tag", "Tagen"),
+    "en": ("day", "days"),
+    "fr": ("jour", "jours"),
+}
+
+_ASSIGNMENT_DECISIONS = {
+    "de": {
+        "closed": "geschlossen",
+        "reopened": "erneut geöffnet",
+        "changes_requested": "zur Überarbeitung zurückgegeben",
+    },
+    "en": {
+        "closed": "closed",
+        "reopened": "reopened",
+        "changes_requested": "returned with changes requested",
+    },
+    "fr": {
+        "closed": "clôturée",
+        "reopened": "rouverte",
+        "changes_requested": "renvoyée avec des modifications demandées",
+    },
+}
+
+
+def _language_code(locale: Optional[str]) -> str:
+    """Normalize a locale such as ``de-DE`` to a supported language code."""
+    language = (locale or "en").split("-")[0].lower()
+    return language if language in _DAY_UNITS else "en"
+
+
+def localize_day_unit(days: int, locale: Optional[str]) -> str:
+    """Return the language-specific day unit for a numeric duration."""
+    singular, plural = _DAY_UNITS[_language_code(locale)]
+    return singular if days == 1 else plural
+
+
+def localize_assignment_decision(decision: str, locale: Optional[str]) -> str:
+    """Return an assignment decision phrased for the recipient's language."""
+    language = _language_code(locale)
+    return _ASSIGNMENT_DECISIONS[language].get(
+        decision, decision.replace("_", " ").lower()
+    )
 
 
 def get_locale_for_email(email: str) -> str:
@@ -51,6 +95,28 @@ def get_locale_for_email(email: str) -> str:
         logger.warning("Failed to resolve default language from global settings: %s", e)
 
     return "en"
+
+
+def get_disabled_email_templates() -> set:
+    """
+    Return the set of template keys disabled by the administrator.
+    Stored in GlobalSettings(name="general").value["disabled_email_templates"].
+    An absent or malformed entry means every template is enabled.
+    """
+    try:
+        general = GlobalSettings.objects.filter(name="general").first()
+        if general and isinstance(general.value, dict):
+            disabled = general.value.get("disabled_email_templates", [])
+            if isinstance(disabled, list):
+                return {key for key in disabled if isinstance(key, str)}
+    except Exception as e:
+        logger.warning("Failed to resolve disabled email templates: %s", e)
+    return set()
+
+
+def is_email_template_enabled(template_name: str) -> bool:
+    """Whether emails using this template may be sent (enabled by default)."""
+    return template_name not in get_disabled_email_templates()
 
 
 def _load_custom_email_template(
@@ -125,7 +191,7 @@ def load_email_template(
 
     try:
         with open(template_file, "r", encoding="utf-8") as f:
-            template_data = yaml.safe_load(f)
+            template_data = yaml_safe_load(f)
 
         # Validate template structure
         if (
@@ -174,7 +240,7 @@ def render_email_template(
     context: Dict,
     locale: Optional[str] = None,
     recipient_email: Optional[str] = None,
-) -> Dict[str, str]:
+) -> Optional[Dict[str, str]]:
     """
     Render email template with context variables.
 
@@ -190,8 +256,17 @@ def render_email_template(
         recipient_email: Email address of recipient, used to resolve locale from user preferences
 
     Returns:
-        Dictionary with 'subject', 'body', and 'html_body' keys, or empty dict if template not found
+        Dictionary with 'subject', 'body', and 'html_body' keys.
+        Returns None if the template is disabled in settings (intentional skip),
+        or an empty dict if the template could not be loaded or rendered (failure).
     """
+    if not is_email_template_enabled(template_name):
+        logger.info(
+            "Email template is disabled in settings, skipping send",
+            template=template_name,
+        )
+        return None
+
     if locale is None and recipient_email:
         locale = get_locale_for_email(recipient_email)
     template_data = load_email_template(template_name, locale)
@@ -298,6 +373,36 @@ def format_evidence_list(evidences) -> str:
         )
 
     return "\n".join(evidence_lines)
+
+
+def format_security_exception_list(security_exceptions) -> str:
+    """
+    Format a list of security exceptions for email templates
+
+    Args:
+        security_exceptions: List of SecurityException objects
+
+    Returns:
+        Formatted string with security exception information
+    """
+    exception_lines = []
+    for exception in security_exceptions:
+        expiration_date = (
+            exception.expiration_date.strftime("%Y-%m-%d")
+            if exception.expiration_date
+            else "Not set"
+        )
+        status = (
+            exception.get_status_display()
+            if hasattr(exception, "get_status_display")
+            else exception.status
+        )
+        ref_id = f"{exception.ref_id} - " if exception.ref_id else ""
+        exception_lines.append(
+            f"- {ref_id}{exception.name} (Status: {status}, Expiration: {expiration_date})"
+        )
+
+    return "\n".join(exception_lines)
 
 
 def format_validation_list(validations) -> str:

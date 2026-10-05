@@ -1,9 +1,13 @@
-import { nestedWriteFormAction } from '$lib/utils/actions';
+import { handleErrorResponse, nestedWriteFormAction } from '$lib/utils/actions';
 import { BASE_API_URL } from '$lib/utils/constants';
 import { getModelInfo } from '$lib/utils/crud';
+import { formatSelectFieldData } from '$lib/utils/load';
+import { safeTranslate } from '$lib/utils/i18n';
 import { modelSchema } from '$lib/utils/schemas';
-import { error, type Actions } from '@sveltejs/kit';
-import { superValidate } from 'sveltekit-superforms';
+import { m } from '$paraglide/messages';
+import { error, fail, type Actions } from '@sveltejs/kit';
+import { setFlash } from 'sveltekit-flash-message/server';
+import { message, superValidate } from 'sveltekit-superforms';
 import { zod4 as zod } from 'sveltekit-superforms/adapters';
 import { z } from 'zod';
 import type { ModelInfo } from '$lib/utils/types';
@@ -57,6 +61,26 @@ export const load = (async ({ fetch, params }) => {
 
 	const evidenceModel = getModelInfo('evidences');
 	const evidenceCreateSchema = modelSchema('evidences');
+
+	const taskTemplateModel = getModelInfo('task-templates');
+	const taskTemplateCreateSchema = modelSchema('task-templates');
+	// TaskTemplateForm reads `model.selectOptions['status']` unguarded, so the options
+	// have to be resolved here or opening the modal throws.
+	const taskTemplateSelectOptions: Record<string, any> = {};
+	if (taskTemplateModel.selectFields) {
+		await Promise.all(
+			taskTemplateModel.selectFields.map(async (selectField) => {
+				const res = await fetch(`${BASE_API_URL}/task-templates/${selectField.field}/`);
+				if (res.ok) {
+					taskTemplateSelectOptions[selectField.field] = formatSelectFieldData(
+						await res.json(),
+						selectField
+					);
+				}
+			})
+		);
+	}
+	taskTemplateModel.selectOptions = taskTemplateSelectOptions;
 	const scoreSchema = z.object({
 		is_scored: z.boolean().optional(),
 		score: z.number().optional().nullable(),
@@ -76,6 +100,16 @@ export const load = (async ({ fetch, params }) => {
 				requirement_assessments: [requirementAssessment.id],
 				folder: requirementAssessment.folder.id
 			};
+			// The requirement assessment's folder is the enclave for a third-party
+			// audit, so a task the respondent raises stays inside it.
+			const taskTemplateCreateForm = await superValidate(
+				{
+					requirement_assessments: [requirementAssessment.id],
+					folder: requirementAssessment.folder.id
+				},
+				zod(taskTemplateCreateSchema),
+				{ errors: false }
+			);
 			const evidenceCreateForm = await superValidate(
 				evidenceInitialData,
 				zod(evidenceCreateSchema),
@@ -104,6 +138,9 @@ export const load = (async ({ fetch, params }) => {
 				}),
 				...(requirementAssessment.applied_controls !== undefined && {
 					applied_controls: requirementAssessment.applied_controls.map((ac) => ac.id)
+				}),
+				...(requirementAssessment.task_templates !== undefined && {
+					task_templates: requirementAssessment.task_templates.map((t) => t.id)
 				})
 			};
 			const updateForm = await superValidate(object, zod(updateSchema), { errors: false });
@@ -111,6 +148,7 @@ export const load = (async ({ fetch, params }) => {
 				...requirementAssessment,
 				measureCreateForm,
 				evidenceCreateForm,
+				taskTemplateCreateForm,
 				observationBuffer,
 				scoreForm,
 				updateForm,
@@ -142,6 +180,7 @@ export const load = (async ({ fetch, params }) => {
 		requirements,
 		measureModel,
 		evidenceModel,
+		taskTemplateModel,
 		assignment,
 		viewerRole: tableMode.viewer_role ?? 'respondent',
 		title: compliance_assessment.name
@@ -163,15 +202,77 @@ export const actions: Actions = {
 		const res = await event.fetch(endpoint, requestInitOptions);
 		return { status: res.status, body: await res.json() };
 	},
+	updateTaskTemplateStatus: async (event) => {
+		const { id, status } = await event.request.json();
+		const res = await event.fetch(`${BASE_API_URL}/task-templates/${id}/`, {
+			method: 'PATCH',
+			body: JSON.stringify({ status })
+		});
+		return { status: res.status, body: await res.json() };
+	},
 	createEvidence: async (event) => {
 		const result = await nestedWriteFormAction({ event, action: 'create' });
-		return { form: result.form, newEvidence: result.form.message.object };
+		if (result.form) return { form: result.form, newEvidence: result.form.message.object };
+		else return result;
 	},
 	createAppliedControl: async (event) => {
 		return nestedWriteFormAction({ event, action: 'create' });
 	},
+	createTaskTemplate: async (event) => {
+		return nestedWriteFormAction({ event, action: 'create' });
+	},
 	update: async (event) => {
-		return nestedWriteFormAction({ event, action: 'edit' });
+		const schema = modelSchema('requirement-assessments');
+		const id = event.url.searchParams.get('id');
+		if (!id) return fail(400, { form: await superValidate(event.request, zod(schema)) });
+
+		const form = await superValidate(event.request, zod(schema));
+		if (!form.valid) return fail(400, { form });
+
+		const formData: Record<string, any> = { ...form.data };
+		for (const key of ['status', 'result', 'extended_result', 'respondent_alignment']) {
+			if (formData[key] === '' || formData[key] === null) delete formData[key];
+		}
+
+		const endpoint = `${BASE_API_URL}/requirement-assessments/${id}/`;
+		const response = await event.fetch(endpoint, {
+			method: 'PATCH',
+			body: JSON.stringify(formData)
+		});
+		if (!response.ok) return handleErrorResponse({ event, response, form });
+
+		const object = await response.json();
+		setFlash(
+			{
+				type: 'success',
+				message: m.successfullySavedObject({
+					object: safeTranslate('requirementAssessment').toLowerCase()
+				})
+			},
+			event
+		);
+		return message(form, { object });
+	},
+	// The reviewer's half of the loop, through the same endpoint the assignments board
+	// uses: the state machine stays the only authority.
+	reviewAssignment: async (event) => {
+		const formData = await event.request.formData();
+		const endpoint = `${BASE_API_URL}/requirement-assignments/${event.params.id}/set_status/`;
+		const res = await event.fetch(endpoint, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				status: formData.get('status'),
+				reviewer_observation: formData.get('reviewer_observation') ?? ''
+			})
+		});
+		let body;
+		try {
+			body = await res.json();
+		} catch {
+			body = { error: res.statusText };
+		}
+		return { submitStatus: res.status, submitBody: body };
 	},
 	submitAssignment: async (event) => {
 		const endpoint = `${BASE_API_URL}/requirement-assignments/${event.params.id}/set_status/`;

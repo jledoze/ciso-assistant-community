@@ -43,12 +43,16 @@ from allauth.socialaccount.providers.saml.views import (
 from allauth.utils import ValidationError
 
 # === Application-specific imports ===
-from core.permissions import IsAdministrator  # ou une permission plus adaptée
+from core.permissions import IsGlobalAdmin  # ou une permission plus adaptée
+from iam.adapter import DEFAULT_ATTRIBUTE_MAPPING_GROUPS
 from iam.models import User
 from iam.sso.errors import AuthError
 from iam.sso.models import SSOSettings
-from iam.utils import generate_token
+from iam.sso.redirects import get_sso_authenticate_url
+from iam.sso.slo import stash_saml_slo_state
+from iam.utils import generate_token, sync_user_idp_groups
 from global_settings.models import GlobalSettings
+from global_settings.utils import ff_is_enabled
 
 DEFAULT_SAML_ATTRIBUTE_MAPPING_EMAIL = SAMLProvider.default_attribute_mapping["email"]
 
@@ -149,6 +153,7 @@ class FinishACSView(SAMLViewMixin, View):
             )
             login.state["process"] = AuthProcess.LOGIN
             login.state["next"] = next_url
+        login.state["next"] = get_sso_authenticate_url(login.state["next"])
         try:
             attribute_mapping = provider.app.settings.get("attribute_mapping", {})
             # our parameter is either:
@@ -160,6 +165,16 @@ class FinishACSView(SAMLViewMixin, View):
             ] or DEFAULT_SAML_ATTRIBUTE_MAPPING_EMAIL
             emails = [auth.get_attribute(x) or [] for x in email_attributes]
             emails = [x for xs in emails for x in xs]  # flatten
+            idp_first_names = auth.get_attribute(
+                "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname"
+            )
+            idp_last_names = auth.get_attribute(
+                "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname"
+            )
+            sso_settings = provider.app
+            jit_provisioning_active = sso_settings.jit_provisioning_enabled and (
+                ff_is_enabled("jit_provisioning")
+            )
             user = User.objects.filter(email__iexact=auth.get_nameid()).first()
             if not user and emails:
                 logger.info(
@@ -170,25 +185,40 @@ class FinishACSView(SAMLViewMixin, View):
                 try:
                     user = User.objects.get(email__iexact=emails[0])
                 except User.DoesNotExist:
-                    raise User.DoesNotExist()
-            idp_first_names = auth.get_attribute(
-                "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname"
-            )
-            idp_last_names = auth.get_attribute(
-                "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname"
-            )
+                    if not jit_provisioning_active:
+                        raise User.DoesNotExist()
+                    user = User.objects.create_user(
+                        email=emails[0],
+                        password=None,
+                        first_name=idp_first_names[0] if idp_first_names else "",
+                        last_name=idp_last_names[0] if idp_last_names else "",
+                        user_groups=sso_settings.default_user_groups,
+                        is_jit_provisioned=True,
+                    )
+                    logger.info(
+                        "SAML: user auto-provisioned via JIT", user_id=str(user.id)
+                    )
+            if not user:
+                raise User.DoesNotExist()
             user.first_name = idp_first_names[0] if idp_first_names else user.first_name
             user.last_name = idp_last_names[0] if idp_last_names else user.last_name
             user.save()
+            if jit_provisioning_active:
+                group_claims_string = attribute_mapping.get("groups", [])
+                group_claims = [
+                    item.strip() for y in group_claims_string for item in y.split(",")
+                ] or DEFAULT_ATTRIBUTE_MAPPING_GROUPS
+                if group_claims:
+                    group_values = [auth.get_attribute(x) or [] for x in group_claims]
+                    group_names = [g for xs in group_values for g in xs]
+                    sync_user_idp_groups(user, group_names)
             token = generate_token(user)
-            login.state["next"] = (
-                f"{settings.CISO_ASSISTANT_URL.rstrip('/')}/sso/authenticate"
-            )
             pre_social_login(request, login)
             if request.user.is_authenticated:
                 get_account_adapter(request).logout(request)
             login._accept_login(request)  # complete_social_login not working
             record_authentication(request, login)
+            stash_saml_slo_state(request, auth, user)
         except User.DoesNotExist as e:
             # NOTE: We might want to allow signup some day
             error = AuthError.USER_DOES_NOT_EXIST
@@ -239,7 +269,7 @@ class GenerateSAMLKeyView(SAMLViewMixin, APIView):
     Accessible only to admins (to be adapted as needed).
     """
 
-    permission_classes = [IsAdministrator]
+    permission_classes = [IsGlobalAdmin]
 
     def post(self, request, organization_slug):
         try:
@@ -301,7 +331,7 @@ class GenerateSAMLKeyView(SAMLViewMixin, APIView):
 
 
 class DownloadSAMLPublicCertView(SAMLViewMixin, APIView):
-    permission_classes = [IsAdministrator]
+    permission_classes = [IsGlobalAdmin]
 
     def get(self, request, organization_slug):
         provider = self.get_provider(organization_slug)

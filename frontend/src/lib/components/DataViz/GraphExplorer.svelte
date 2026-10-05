@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+
+	import { mountThemeAwareChart } from '$lib/utils/echartsTheme';
 	import type * as echarts from 'echarts';
 	import { getFlash } from 'sveltekit-flash-message';
 	import { page } from '$app/stores';
@@ -363,42 +365,53 @@
 		}
 	};
 
-	onMount(async () => {
-		const echarts = await import('echarts');
-		const element = document.getElementById(chart_id);
+	onMount(() => {
+		let dispose: (() => void) | undefined;
+		let active = true;
+		(async () => {
+			const echarts = await import('echarts');
+			if (!active) return;
+			const element = document.getElementById(chart_id);
 
-		if (!element) {
-			console.error(`Element with id ${chart_id} not found`);
-			return;
-		}
-
-		chart = echarts.init(element);
-		const options = getChartOptions();
-		chart.setOption(options);
-
-		chart.on('click', (params) => {
-			if (params.dataType === 'node') {
-				handleNodesEmphasis(params.data.id);
-			} else {
-				handleNodesEmphasis(null);
+			if (!element) {
+				console.error(`Element with id ${chart_id} not found`);
+				return;
 			}
-		});
 
-		chart.on('dblclick', onNodeDoubleClick);
+			const disposeChart = mountThemeAwareChart(echarts, element, () => getChartOptions(), {
+				rendererOpts: {}, // canvas: this layout is too heavy for svg
+				manageResize: false, // the debounced handler below owns resizing
+				onChart: (c: any) => {
+					chart = c;
+					c.on('click', (params: any) => {
+						if (params.dataType === 'node') {
+							handleNodesEmphasis(params.data.id);
+						} else {
+							handleNodesEmphasis(null);
+						}
+					});
+					c.on('dblclick', onNodeDoubleClick);
+				}
+			});
 
-		const handleResize = () => {
-			clearTimeout(resizeTimeout);
-			resizeTimeout = setTimeout(() => {
-				chart?.resize();
-			}, 250);
-		};
+			const handleResize = () => {
+				clearTimeout(resizeTimeout);
+				resizeTimeout = setTimeout(() => {
+					chart?.resize();
+				}, 250);
+			};
 
-		window.addEventListener('resize', handleResize);
+			window.addEventListener('resize', handleResize);
 
+			dispose = () => {
+				window.removeEventListener('resize', handleResize);
+				clearTimeout(resizeTimeout);
+				disposeChart();
+			};
+		})();
 		return () => {
-			window.removeEventListener('resize', handleResize);
-			clearTimeout(resizeTimeout);
-			chart?.dispose();
+			active = false;
+			dispose?.();
 		};
 	});
 
@@ -409,13 +422,13 @@
 	};
 </script>
 
-<div class="flex flex-col h-screen bg-white shadow-sm">
+<div class="flex flex-col h-screen bg-surface-50-950 shadow-sm">
 	<div class="relative p-2">
 		<label for="graph-search" class="sr-only">Search</label>
 		<input
 			id="graph-search"
 			type="text"
-			class="w-full rounded-md border-gray-200 py-2.5 pe-10 shadow-xs"
+			class="w-full rounded-md border-surface-200-800 bg-surface-50-950 text-surface-900-100 py-2.5 pe-10 shadow-xs"
 			bind:value={searchQuery}
 			onkeydown={handleKeyDown}
 			placeholder={m.findANode()}
@@ -423,7 +436,7 @@
 		<span class="absolute inset-y-0 end-0 grid w-10 place-content-center">
 			<button
 				type="button"
-				class="text-gray-600 hover:text-gray-700"
+				class="text-surface-600-400 hover:text-surface-700-300"
 				onclick={() => searchNodes(searchQuery)}
 				aria-label="Search"
 			>

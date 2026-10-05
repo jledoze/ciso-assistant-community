@@ -1,10 +1,10 @@
 <script lang="ts">
 	import AutocompleteSelect from '$lib/components/Forms/AutocompleteSelect.svelte';
-	import FolderTreeSelect from '$lib/components/Forms/FolderTreeSelect.svelte';
 	import type { CacheLock, ModelInfo } from '$lib/utils/types';
 	import { m } from '$paraglide/messages';
 	import type { SuperValidated } from 'sveltekit-superforms';
 	import TextField from '$lib/components/Forms/TextField.svelte';
+	import Select from '$lib/components/Forms/Select.svelte';
 
 	interface Props {
 		form: SuperValidated<any>;
@@ -25,7 +25,7 @@
 	}: Props = $props();
 </script>
 
-<p class="text-sm text-gray-500">{m.strategicScenarioHelpText()}</p>
+<p class="text-sm text-surface-600-400">{m.strategicScenarioHelpText()}</p>
 
 <AutocompleteSelect
 	{form}
@@ -36,6 +36,7 @@
 	cacheLock={cacheLocks['ro_to_couple']}
 	bind:cachedValue={formDataCache['ro_to_couple']}
 	label={m.roToCouple()}
+	helpText={m.strategicScenarioRoToHelpText()}
 />
 {#key formDataCache['ro_to_couple'] || initialData.ro_to_couple}
 	<AutocompleteSelect
@@ -50,21 +51,16 @@
 		cacheLock={cacheLocks['focused_feared_event']}
 		bind:cachedValue={formDataCache['focused_feared_event']}
 		label={m.focusedFearedEvent()}
+		helpText={m.strategicScenarioFocusedFearedEventHelpText()}
 		nullable
 	/>
 {/key}
-<FolderTreeSelect
+<Select
 	{form}
-	field="folder"
-	cacheLock={cacheLocks['folder']}
-	bind:cachedValue={formDataCache['folder']}
-	label={m.folder()}
-	hidden
-/>
-<TextField
-	{form}
-	field="ref_id"
-	label={m.refId()}
-	cacheLock={cacheLocks['ref_id']}
-	bind:cachedValue={formDataCache['ref_id']}
+	options={(model.selectOptions?.['gravity'] ?? []).filter((o) => o.value !== -1)}
+	field="gravity_forced"
+	label={m.forcedGravity()}
+	helpText={m.forcedGravityHelpText()}
+	cacheLock={cacheLocks['gravity_forced']}
+	bind:cachedValue={formDataCache['gravity_forced']}
 />

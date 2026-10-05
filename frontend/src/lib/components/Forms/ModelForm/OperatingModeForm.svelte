@@ -1,7 +1,5 @@
 <script lang="ts">
 	import AutocompleteSelect from '../AutocompleteSelect.svelte';
-	import FolderTreeSelect from '../FolderTreeSelect.svelte';
-	import TextField from '$lib/components/Forms/TextField.svelte';
 	import Select from '$lib/components/Forms/Select.svelte';
 	import type { SuperForm } from 'sveltekit-superforms';
 	import type { ModelInfo, CacheLock } from '$lib/utils/types';
@@ -13,6 +11,7 @@
 		cacheLocks?: Record<string, CacheLock>;
 		formDataCache?: Record<string, any>;
 		initialData?: Record<string, any>;
+		object?: Record<string, any>;
 	}
 
 	let {
@@ -21,8 +20,13 @@
 		cacheLocks = {},
 		formDataCache = $bindable({}),
 		initialData = {},
+		object = {},
 		updated_fields = new Set()
 	}: Props = $props();
+
+	const likelihoodFromSteps = $derived(
+		['standard', 'advanced'].includes(object?.quotation_method ?? (model as any).quotationMethod)
+	);
 
 	async function fetchDefaultRefId(operationalScenarioId: string) {
 		try {
@@ -49,14 +53,6 @@
 	}
 </script>
 
-<FolderTreeSelect
-	{form}
-	field="folder"
-	cacheLock={cacheLocks['folder']}
-	bind:cachedValue={formDataCache['folder']}
-	label={m.folder()}
-	hidden
-/>
 <AutocompleteSelect
 	{form}
 	optionsEndpoint="operational-scenarios"
@@ -68,19 +64,19 @@
 	onChange={async (e) => fetchDefaultRefId(e)}
 	mount={async (e) => fetchDefaultRefId(e)}
 />
-<TextField
-	{form}
-	field="ref_id"
-	label={m.refId()}
-	cacheLock={cacheLocks['ref_id']}
-	bind:cachedValue={formDataCache['ref_id']}
-/>
-<Select
-	{form}
-	options={model.selectOptions['likelihood']}
-	field="likelihood"
-	label={m.likelihood()}
-	cacheLock={cacheLocks['likelihood']}
-	bind:cachedValue={formDataCache['likelihood']}
-	helpText={m.likelihoodHelpText()}
-/>
+{#if likelihoodFromSteps}
+	<p class="text-sm text-surface-600-400">
+		<i class="fa-solid fa-calculator mr-1"></i>
+		{m.operatingModeLikelihoodFromSteps()}
+	</p>
+{:else}
+	<Select
+		{form}
+		options={model.selectOptions['likelihood']}
+		field="likelihood"
+		label={m.likelihood()}
+		cacheLock={cacheLocks['likelihood']}
+		bind:cachedValue={formDataCache['likelihood']}
+		helpText={m.likelihoodHelpText()}
+	/>
+{/if}

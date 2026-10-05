@@ -8,9 +8,10 @@
 	interface Props {
 		handler: DataHandler;
 		URLModel: string;
+		scrollTarget?: HTMLElement;
 	}
 
-	let { handler, URLModel }: Props = $props();
+	let { handler, URLModel, scrollTarget }: Props = $props();
 
 	const pageNumber = handler.getPageNumber();
 	const rowsPerPage = handler.getRowsPerPage();
@@ -30,20 +31,22 @@
 			breadcrumbs.updateCrumb(hrefPattern, { href: fullPath });
 		}
 		handler.invalidate();
+		scrollTarget?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	};
 
-	let currentEndpoint: string | null = $state(null);
-
 	afterNavigate(() => {
-		if (page.url && page.url.pathname !== currentEndpoint) {
-			const endpoint = page.url.pathname;
-			let newPageNumber = parseInt(page.url.searchParams.get('page') ?? '1');
-			setTimeout(() => {
-				handler.setPage(newPageNumber);
-				handler.invalidate();
-			}, 300);
-			currentEndpoint = endpoint;
-		}
+		if (!page.url) return;
+
+		const parsed = parseInt(page.url.searchParams.get('page') ?? '1');
+		const newPageNumber = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+		// The handler already fetches on mount; re-fetch only when the URL asks for a
+		// different page, or every table loads twice on load and on every navigation.
+		if (newPageNumber === $pageNumber) return;
+
+		setTimeout(() => {
+			handler.setPage(newPageNumber);
+			handler.invalidate();
+		}, 300);
 	});
 </script>
 
@@ -77,14 +80,14 @@
 		background: inherit;
 		height: 32px;
 		width: 32px;
-		color: #616161;
+		color: var(--color-surface-600-400);
 		cursor: pointer;
 		font-size: 13px;
 		margin: 0;
 		padding: 0;
 		transition: all, 0.2s;
 		line-height: 32px;
-		border: 1px solid #e0e0e0;
+		border: 1px solid var(--color-surface-200-800);
 		border-right: none;
 		outline: none;
 	}
@@ -94,20 +97,20 @@
 		min-width: 72px;
 	}
 	button:last-child {
-		border-right: 1px solid #e0e0e0;
+		border-right: 1px solid var(--color-surface-200-800);
 		border-radius: 0 4px 4px 0;
 		width: auto;
 		min-width: 72px;
 	}
 	button:not(.active):hover {
-		background: #eee;
+		background: var(--color-surface-100-900);
 	}
 	button.ellipse:hover {
 		background: inherit;
 		cursor: default;
 	}
 	button.active {
-		background: #eee;
+		background: var(--color-surface-100-900);
 		font-weight: bold;
 		cursor: default;
 	}

@@ -1,6 +1,5 @@
 <script lang="ts">
 	import AutocompleteSelect from '../AutocompleteSelect.svelte';
-	import FolderTreeSelect from '../FolderTreeSelect.svelte';
 	import TextField from '$lib/components/Forms/TextField.svelte';
 	import Select from '$lib/components/Forms/Select.svelte';
 	import type { SuperValidated } from 'sveltekit-superforms';
@@ -22,14 +21,34 @@
 		formDataCache = $bindable({}),
 		initialData = {}
 	}: Props = $props();
+
+	const formStore = (form as any).form;
+
+	// A technique fills what the user hasn't written yet
+	async function prefill(id: string | null) {
+		if (!id) return;
+		const res = await fetch(`/techniques/${id}`);
+		if (!res.ok) return;
+		const technique = await res.json();
+		formStore.update((data: Record<string, any>) => ({
+			...data,
+			name: data.name || technique.name,
+			description: data.description || technique.description || ''
+		}));
+	}
 </script>
 
-<FolderTreeSelect
+<AutocompleteSelect
 	{form}
-	field="folder"
-	cacheLock={cacheLocks['folder']}
-	bind:cachedValue={formDataCache['folder']}
-	label={m.domain()}
+	nullable
+	optionsEndpoint="techniques"
+	field="technique"
+	optionsLabelField="auto"
+	cacheLock={cacheLocks['technique']}
+	bind:cachedValue={formDataCache['technique']}
+	label={m.technique()}
+	helpText={m.elementaryActionTechniqueHelp()}
+	onChange={prefill}
 />
 <Select
 	{form}
@@ -40,15 +59,9 @@
 	cacheLock={cacheLocks['attack_stage']}
 	bind:cachedValue={formDataCache['attack_stage']}
 />
-<TextField
-	{form}
-	field="ref_id"
-	label={m.refId()}
-	cacheLock={cacheLocks['ref_id']}
-	bind:cachedValue={formDataCache['ref_id']}
-/>
 <AutocompleteSelect
 	{form}
+	nullable
 	optionsEndpoint="threats"
 	field="threat"
 	optionsLabelField="auto"

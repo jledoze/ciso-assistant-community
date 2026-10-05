@@ -1,11 +1,14 @@
 <script lang="ts">
+	import MostLikelyOperatingMode from '$lib/components/EbiosRM/MostLikelyOperatingMode.svelte';
 	import type { PageData } from './$types';
 	import { m } from '$paraglide/messages';
 	import { page } from '$app/state';
 	import { pageTitle } from '$lib/utils/stores';
+	import MarkdownRenderer from '$lib/components/MarkdownRenderer.svelte';
 	import { Popover } from '@skeletonlabs/skeleton-svelte';
 	import { safeTranslate } from '$lib/utils/i18n';
 	import { canPerformAction } from '$lib/utils/access-control';
+	import { isDark } from '$lib/utils/helpers';
 	import ModelTable from '$lib/components/ModelTable/ModelTable.svelte';
 	import { countMasked } from '$lib/utils/related-visibility';
 	import CreateModal from '$lib/components/Modals/CreateModal.svelte';
@@ -27,7 +30,10 @@
 
 	const operationalScenario = $derived(data.data);
 
-	pageTitle.set(m.operationalScenarioRefId({ refId: operationalScenario.ref_id }));
+	const scenarioLabel = $derived(
+		[operationalScenario.ref_id, operationalScenario.attack_path?.name].filter(Boolean).join(' · ')
+	);
+	pageTitle.set(m.operationalScenarioRefId({ refId: scenarioLabel }));
 
 	let activeActivity: string | null = $state(null);
 	page.url.searchParams.forEach((value, key) => {
@@ -76,12 +82,12 @@
 	let group = $state(Object.keys(data.relatedModels)[0]);
 </script>
 
-<div class="card p-4 bg-white shadow-lg">
+<div class="card p-4 bg-surface-50-950 shadow-lg">
 	<div class="flex flex-col space-y-4 items-center">
 		<div class="flex items-center justify-between w-full">
 			<a
 				href="/ebios-rm/{operationalScenario.ebios_rm_study.id}"
-				class="flex items-center space-x-2 text-primary-800 hover:text-primary-600"
+				class="flex items-center space-x-2 text-primary-800-200 hover:text-primary-600-400"
 			>
 				<i class="fa-solid fa-arrow-left"></i>
 				<p class="">{m.goBackToEbiosRmStudy()}</p>
@@ -89,17 +95,21 @@
 			<div class="flex font-bold text-2xl space-x-2">
 				<span
 					><a
-						class="text-primary-700 hover:text-primary-500"
+						class="text-primary-700-300 hover:text-primary-500"
 						href="/ebios-rm/{operationalScenario.ebios_rm_study.id}"
 						>{operationalScenario.ebios_rm_study.str}</a
 					>
-					- {m.operationalScenarioRefId({ refId: operationalScenario.ref_id })}</span
+					- {m.operationalScenarioRefId({ refId: scenarioLabel })}</span
 				>
 				<p class="flex items-center">
 					{#if operationalScenario.is_selected}
-						<span class="badge bg-green-200 text-green-700">{m.selected()}</span>
+						<span class="badge bg-green-200 text-green-700 dark:bg-green-500/20 dark:text-green-300"
+							>{m.selected()}</span
+						>
 					{:else}
-						<span class="badge bg-red-200 text-red-700">{m.notSelected()}</span>
+						<span class="badge bg-red-200 text-red-700 dark:bg-red-500/20 dark:text-red-300"
+							>{m.notSelected()}</span
+						>
 					{/if}
 				</p>
 			</div>
@@ -118,126 +128,177 @@
 			class="relative p-4 space-y-4 rounded-md w-full flex flex-col items-center justify-center
                 {activeActivity === 'one'
 				? 'border-2 border-primary-500'
-				: 'border-2 border-gray-300 border-dashed'}"
+				: 'border-2 border-surface-300-700 border-dashed'}"
 		>
 			<span
-				class="absolute -top-3 bg-white font-bold {activeActivity === 'one'
+				class="absolute -top-3 bg-surface-50-950 font-bold {activeActivity === 'one'
 					? 'text-primary-500'
-					: 'text-gray-500'}">{m.activityOne()}</span
+					: 'text-surface-600-400'}">{m.activityOne()}</span
 			>
 			<h1
-				class="font-bold text-xl {activeActivity === 'one' ? 'text-primary-500' : 'text-gray-500'}"
+				class="font-bold text-xl {activeActivity === 'one'
+					? 'text-primary-500'
+					: 'text-surface-600-400'}"
 			>
 				{m.ebiosWs4_1()}
 			</h1>
 			{#if operationalScenario.operating_modes_description}
-				<p class="text-gray-600">{operationalScenario.operating_modes_description}</p>
+				<p class="text-surface-600-400 max-w-prose text-left">
+					{operationalScenario.operating_modes_description}
+				</p>
 			{:else}
-				<p class="text-gray-600">{m.noDescription()}</p>
+				<p class="text-surface-600-400">{m.noDescription()}</p>
 			{/if}
 			<div class="flex flex-col space-y-2 items-center">
 				<div class="flex items-center gap-4">
 					{#if operationalScenario.strategic_scenario}
 						<div
-							class="flex flex-col space-y-2 p-4 bg-amber-100 border-amber-400 border rounded-md shadow-xs text-center min-w-48"
+							class="flex flex-col space-y-2 p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 border-t-4 border-t-amber-400 rounded-md shadow-xs text-center min-w-48"
 						>
-							<h4 class="font-semibold text-gray-600">{m.strategicScenario()}</h4>
-							<i class="fa-solid fa-chess text-3xl text-amber-600"></i>
+							<h4 class="font-semibold text-surface-600-400">{m.strategicScenario()}</h4>
+							<i class="fa-solid fa-chess text-3xl text-amber-600 self-center"></i>
 							<a
 								href="/strategic-scenarios/{operationalScenario.strategic_scenario.id}"
-								class="badge text-white bg-amber-500 hover:bg-amber-600"
+								class="badge self-center whitespace-normal text-white bg-amber-500 hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-700"
 								>{operationalScenario.strategic_scenario.name}</a
 							>
 							{#if operationalScenario.strategic_scenario.description}
-								<p class="text-sm text-gray-600 italic">
+								<p class="text-sm text-surface-600-400 italic">
 									{operationalScenario.strategic_scenario.description}
 								</p>
 							{/if}
 						</div>
 					{/if}
 					{#if operationalScenario.strategic_scenario && operationalScenario.attack_path}
-						<i class="fa-solid fa-arrow-right text-2xl text-gray-400"></i>
+						<i class="fa-solid fa-arrow-right text-2xl text-surface-400-600"></i>
 					{/if}
 					{#if operationalScenario.attack_path}
 						<div
-							class="flex flex-col space-y-2 p-4 bg-teal-100 border-teal-400 border rounded-md shadow-xs text-center min-w-48"
+							class="flex flex-col space-y-2 p-4 bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 border-t-4 border-t-teal-400 rounded-md shadow-xs text-center min-w-48"
 						>
-							<h4 class="font-semibold text-gray-600">{m.attackPath()}</h4>
-							<i class="fa-solid fa-route text-3xl text-teal-600"></i>
+							<h4 class="font-semibold text-surface-600-400">{m.attackPath()}</h4>
+							<i class="fa-solid fa-route text-3xl text-teal-600 self-center"></i>
 							<a
 								href="/attack-paths/{operationalScenario.attack_path.id}"
-								class="badge text-white bg-teal-500 hover:bg-teal-600"
+								class="badge self-center whitespace-normal text-white bg-teal-500 hover:bg-teal-600 dark:bg-teal-600 dark:hover:bg-teal-700"
 								>{operationalScenario.attack_path.name}</a
 							>
 							{#if operationalScenario.attack_path.description}
-								<p class="text-sm text-gray-600 italic">
+								<p class="text-sm text-surface-600-400 italic">
 									{operationalScenario.attack_path.description}
 								</p>
 							{/if}
 						</div>
 					{/if}
 				</div>
-				<div class="grid grid-cols-3 gap-12 items-center">
+				<div class="grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-4 items-center">
 					<div
-						class="flex flex-col space-y-4 p-4 bg-red-200 border-red-400 border rounded-md shadow-xs text-center"
+						class="flex flex-col space-y-4 p-4 h-full bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 border-t-4 border-t-red-400 rounded-md shadow-xs text-center"
 					>
-						<h4 class="font-semibold text-gray-600">{m.riskOrigin()}</h4>
-						<i class="fa-solid fa-skull-crossbones text-3xl"></i>
-						<p class="badge whitespace-normal text-white bg-red-500 capitalize">
+						<h4 class="font-semibold text-surface-600-400">{m.riskOrigin()}</h4>
+						<i class="fa-solid fa-skull-crossbones text-3xl text-red-600 self-center"></i>
+						<p
+							class="badge self-center whitespace-normal text-white bg-red-500 dark:bg-red-600 capitalize"
+						>
 							{safeTranslate(operationalScenario.ro_to.risk_origin.str)}
 						</p>
 					</div>
+					<i class="fa-solid fa-arrow-right text-2xl text-surface-400-600"></i>
 					<div
-						class="flex flex-col space-y-4 p-4 bg-violet-200 border-violet-400 border rounded-md shadow-xs text-center"
+						class="flex flex-col space-y-4 p-4 h-full bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 border-t-4 border-t-violet-400 rounded-md shadow-xs text-center"
 					>
-						<h4 class="font-semibold text-gray-600">{m.stakeholders()}</h4>
-						<i class="fa-solid fa-globe text-3xl"></i>
+						<h4 class="font-semibold text-surface-600-400">{m.stakeholders()}</h4>
+						<i class="fa-solid fa-globe text-3xl text-violet-600 self-center"></i>
 						{#each operationalScenario.stakeholders as stakeholder}
-							<p class="badge whitespace-normal text-white bg-violet-500">
-								<a class="anchor text-white" href="/stakeholders/{stakeholder.id}"
+							<p
+								class="badge self-center whitespace-normal text-white bg-violet-500 dark:bg-violet-600"
+							>
+								<a class="text-white hover:underline" href="/stakeholders/{stakeholder.id}"
 									>{stakeholder.str}</a
 								>
 							</p>
 						{:else}
-							<p class="text-gray-500 italic">{m.noStakeholders()}</p>
+							<p class="text-surface-600-400 italic">{m.noStakeholders()}</p>
 						{/each}
 					</div>
+					<i class="fa-solid fa-arrow-right text-2xl text-surface-400-600"></i>
 					<div
-						class="flex flex-col space-y-4 p-4 bg-blue-200 border-blue-400 border rounded-md shadow-xs text-center"
+						class="flex flex-col space-y-4 p-4 h-full bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 border-t-4 border-t-blue-400 rounded-md shadow-xs text-center"
 					>
-						<h4 class="font-semibold text-gray-600">{m.targetObjective()}</h4>
-						<i class="fa-solid fa-bullseye text-3xl"></i>
-						<p class="badge whitespace-normal text-white bg-blue-500 break-all">
+						<h4 class="font-semibold text-surface-600-400">{m.targetObjective()}</h4>
+						<i class="fa-solid fa-bullseye text-3xl text-blue-600 self-center"></i>
+						<p
+							class="badge self-center whitespace-normal text-white bg-blue-500 dark:bg-blue-600 break-words"
+						>
 							{operationalScenario.ro_to.target_objective}
 						</p>
 					</div>
 				</div>
 			</div>
-			<div class="w-full p-4 bg-gray-50 border rounded-md shadow-xs">
-				<h3 class="font-semibold text-lg text-gray-700 flex items-center space-x-2">
-					<i class="fa-solid fa-biohazard text-red-500"></i>
-					<span>{m.threats()}</span>
-				</h3>
-				{#if operationalScenario.threats && countMasked(operationalScenario.threats) > 0}
-					<div class="alert variant-soft-warning mb-2">
-						<i class="fa-solid fa-triangle-exclamation"></i>
-						<span>{m.objectsNotVisible({ count: countMasked(operationalScenario.threats) })}</span>
+			<div class="w-full grid gap-4 {page.data.featureflags?.ttps ? 'md:grid-cols-2' : ''}">
+				<div class="p-4 bg-surface-50-950 border rounded-md shadow-xs">
+					<h3 class="font-semibold text-lg text-surface-700-300 flex items-center space-x-2">
+						<i class="fa-solid fa-biohazard text-red-500"></i>
+						<span>{m.threats()}</span>
+					</h3>
+					{#if operationalScenario.threats && countMasked(operationalScenario.threats) > 0}
+						<div class="alert preset-tonal-warning mb-2">
+							<i class="fa-solid fa-triangle-exclamation"></i>
+							<span>{m.objectsNotVisible({ count: countMasked(operationalScenario.threats) })}</span
+							>
+						</div>
+					{/if}
+					{#if operationalScenario.threats?.length}
+						<ul class="list-disc list-inside text-surface-600-400">
+							{#each operationalScenario.threats as threat}
+								{#if threat.id && threat.str}
+									<li><a class="anchor" href="/threats/{threat.id}">{threat.str}</a></li>
+								{/if}
+							{/each}
+						</ul>
+					{:else}
+						<p class="text-sm italic text-surface-500">{m.noThreat()}</p>
+					{/if}
+				</div>
+				{#if page.data.featureflags?.ttps}
+					<div class="p-4 bg-surface-50-950 border rounded-md shadow-xs">
+						<h3 class="font-semibold text-lg text-surface-700-300 flex items-center space-x-2">
+							<i class="fa-solid fa-crosshairs text-orange-500"></i>
+							<span>{m.techniques()}</span>
+						</h3>
+						{#if operationalScenario.techniques && countMasked(operationalScenario.techniques) > 0}
+							<div class="alert preset-tonal-warning mb-2">
+								<i class="fa-solid fa-triangle-exclamation"></i>
+								<span
+									>{m.objectsNotVisible({
+										count: countMasked(operationalScenario.techniques)
+									})}</span
+								>
+							</div>
+						{/if}
+						{#if operationalScenario.techniques?.length}
+							<ul class="list-disc list-inside text-surface-600-400">
+								{#each operationalScenario.techniques as technique}
+									{#if technique.id && technique.str}
+										<li>
+											<a class="anchor" href="/techniques/{technique.id}">{technique.str}</a>
+										</li>
+									{/if}
+								{/each}
+							</ul>
+						{:else}
+							<p class="text-sm italic text-surface-500">{m.noTechnique()}</p>
+						{/if}
 					</div>
 				{/if}
-				<ul class="list-disc list-inside text-gray-600">
-					{#if operationalScenario.threats?.length}
-						{#each operationalScenario.threats as threat}
-							{#if threat.id && threat.str}
-								<li><a class="anchor" href="/threats/{threat.id}">{threat.str}</a></li>
-							{/if}
-						{/each}
-					{:else}
-						<li>{m.noThreat()}</li>
-					{/if}
-				</ul>
 			</div>
+			{#if operationalScenario.most_likely_operating_mode}
+				<div class="w-full mt-6">
+					<MostLikelyOperatingMode operatingMode={operationalScenario.most_likely_operating_mode} />
+				</div>
+			{/if}
 			{#if Object.keys(data.relatedModels).length > 0}
-				<div class="card shadow-lg mt-8 bg-white w-full">
+				<div class="card shadow-lg mt-8 bg-surface-50-950 w-full">
 					<Tabs
 						value={group}
 						onValueChange={(e) => {
@@ -268,7 +329,7 @@
 										{#snippet addButton()}
 											<div>
 												<span
-													class="inline-flex overflow-hidden rounded-md border bg-white shadow-xs"
+													class="inline-flex overflow-hidden rounded-md border bg-surface-50-950 shadow-xs"
 												>
 													<button
 														class="inline-block border-e p-3 btn-mini-primary w-12 focus:relative"
@@ -293,24 +354,30 @@
 			class="relative p-4 space-y-4 rounded-md w-full flex flex-col items-center
                 {activeActivity === 'two'
 				? 'border-2 border-primary-500'
-				: 'border-2 border-gray-300 border-dashed'}"
+				: 'border-2 border-surface-300-700 border-dashed'}"
 		>
 			<span
-				class="absolute -top-3 bg-white font-bold {activeActivity === 'two'
+				class="absolute -top-3 bg-surface-50-950 font-bold {activeActivity === 'two'
 					? 'text-primary-500'
-					: 'text-gray-500'}">{m.activityTwo()}</span
+					: 'text-surface-600-400'}">{m.activityTwo()}</span
 			>
 			<h1
-				class="font-bold text-xl {activeActivity === 'two' ? 'text-primary-500' : 'text-gray-500'}"
+				class="font-bold text-xl {activeActivity === 'two'
+					? 'text-primary-500'
+					: 'text-surface-600-400'}"
 			>
 				{m.ebiosWs4_2()}
 			</h1>
 			<div
-				class="flex items-center w-full p-4 bg-gray-50 border rounded-md shadow-xs space-x-4 justify-between"
+				class="flex items-center w-full p-4 bg-surface-50-950 border rounded-md shadow-xs space-x-4 justify-between"
 			>
 				<div
 					style="background-color: {operationalScenario.likelihood.hexcolor}"
-					class="flex flex-col items-center justify-center border rounded-md p-4 font-semibold w-full"
+					class="flex flex-col items-center justify-center border rounded-md p-4 font-semibold w-full {isDark(
+						operationalScenario.likelihood.hexcolor
+					)
+						? 'text-white'
+						: 'text-surface-950'}"
 				>
 					<Popover
 						open={likelihoodPopupOpen}
@@ -319,19 +386,31 @@
 						positioning={{ placement: 'bottom' }}
 					>
 						<Popover.Trigger>
-							<h3 class="font-semibold text-lg text-gray-700 flex items-center space-x-2">
+							<h3
+								class="text-xs font-semibold uppercase tracking-wide opacity-80 flex items-center justify-center space-x-2"
+							>
 								{#if operationalScenario.likelihood.description}
-									<i class="fa-solid fa-dice text-black opacity-75"></i>
+									<i class="fa-solid fa-dice opacity-75"></i>
 								{/if}
 								<span>{m.likelihood()}</span>
 							</h3>
-							<span>{operationalScenario.likelihood.name}</span>
+							<span class="text-xl font-bold"
+								>{operationalScenario.likelihood.name}
+								{#if operationalScenario.likelihood_forced !== null && operationalScenario.likelihood_forced !== undefined}
+									<i
+										class="fa-solid fa-thumbtack ml-1 text-xs"
+										title={m.forcedValueTooltip({
+											value: operationalScenario.computed_likelihood?.name ?? '--'
+										})}
+									></i>
+								{/if}</span
+							>
 							<i class="fa-solid fa-circle-info cursor-pointer hover:opacity-70"></i>
 						</Popover.Trigger>
 						<Popover.Positioner>
 							<Popover.Content class="max-w-sm">
 								<div
-									class="card bg-black text-gray-200 p-4 z-20"
+									class="card bg-black text-surface-200-800 p-4 z-20"
 									style="color: {operationalScenario.likelihood.hexcolor}"
 								>
 									<p data-testid="likelihood-description" class="font-semibold">
@@ -345,7 +424,11 @@
 				<i class="fa-solid fa-xmark"></i>
 				<div
 					style="background-color: {operationalScenario.gravity.hexcolor}"
-					class="flex flex-col items-center justify-center border rounded-md p-4 font-semibold w-full"
+					class="flex flex-col items-center justify-center border rounded-md p-4 font-semibold w-full {isDark(
+						operationalScenario.gravity.hexcolor
+					)
+						? 'text-white'
+						: 'text-surface-950'}"
 				>
 					<Popover
 						open={gravityPopupOpen}
@@ -354,19 +437,31 @@
 						positioning={{ placement: 'bottom' }}
 					>
 						<Popover.Trigger>
-							<h3 class="font-semibold text-lg text-gray-700 flex items-center space-x-2">
+							<h3
+								class="text-xs font-semibold uppercase tracking-wide opacity-80 flex items-center justify-center space-x-2"
+							>
 								{#if operationalScenario.gravity.description}
-									<i class="fa-solid fa-bomb text-black opacity-75"></i>
+									<i class="fa-solid fa-bomb opacity-75"></i>
 								{/if}
 								<span>{m.gravity()}</span>
 							</h3>
-							<span>{operationalScenario.gravity.name}</span>
+							<span class="text-xl font-bold"
+								>{operationalScenario.gravity.name}
+								{#if operationalScenario.gravity_forced !== null && operationalScenario.gravity_forced !== undefined}
+									<i
+										class="fa-solid fa-thumbtack ml-1 text-xs"
+										title={m.forcedValueTooltip({
+											value: operationalScenario.computed_gravity?.name ?? '--'
+										})}
+									></i>
+								{/if}</span
+							>
 							<i class="fa-solid fa-circle-info cursor-pointer hover:opacity-70"></i>
 						</Popover.Trigger>
 						<Popover.Positioner>
 							<Popover.Content class="max-w-sm">
 								<div
-									class="card bg-black text-gray-200 p-4 z-20"
+									class="card bg-black text-surface-200-800 p-4 z-20"
 									style="color: {operationalScenario.gravity.hexcolor}"
 								>
 									<p data-testid="gravity-description" class="font-semibold">
@@ -380,7 +475,11 @@
 				<i class="fa-solid fa-equals"></i>
 				<div
 					style="background-color: {operationalScenario.risk_level.hexcolor}"
-					class="flex flex-col items-center justify-center border rounded-md p-4 font-semibold w-full"
+					class="flex flex-col items-center justify-center border rounded-md p-4 font-semibold w-full {isDark(
+						operationalScenario.risk_level.hexcolor
+					)
+						? 'text-white'
+						: 'text-surface-950'}"
 				>
 					<Popover
 						open={riskLevelPopupOpen}
@@ -389,19 +488,21 @@
 						positioning={{ placement: 'bottom' }}
 					>
 						<Popover.Trigger>
-							<h3 class="font-semibold text-lg text-gray-700 flex items-center space-x-2">
+							<h3
+								class="text-xs font-semibold uppercase tracking-wide opacity-80 flex items-center justify-center space-x-2"
+							>
 								{#if operationalScenario.risk_level.description}
-									<i class="fa-solid fa-circle-radiation text-black opacity-75"></i>
+									<i class="fa-solid fa-circle-radiation opacity-75"></i>
 								{/if}
 								<span>{m.riskLevel()}</span>
 							</h3>
-							<span>{operationalScenario.risk_level.name}</span>
+							<span class="text-xl font-bold">{operationalScenario.risk_level.name}</span>
 							<i class="fa-solid fa-circle-info cursor-pointer hover:opacity-70"></i>
 						</Popover.Trigger>
 						<Popover.Positioner>
 							<Popover.Content class="max-w-sm">
 								<div
-									class="card bg-black text-gray-200 p-4 z-20"
+									class="card bg-black text-surface-200-800 p-4 z-20"
 									style="color: {operationalScenario.risk_level.hexcolor}"
 								>
 									<p data-testid="riskLevel-description" class="font-semibold">
@@ -413,15 +514,15 @@
 					</Popover>
 				</div>
 			</div>
-			<div class="w-full p-4 bg-gray-50 border rounded-md shadow-xs">
-				<h3 class="font-semibold text-lg text-gray-700 flex items-center space-x-2">
-					<i class="fa-solid fa-eye text-gray-500 opacity-75"></i>
+			<div class="w-full p-4 bg-surface-50-950 border rounded-md shadow-xs">
+				<h3 class="font-semibold text-lg text-surface-700-300 flex items-center space-x-2">
+					<i class="fa-solid fa-eye text-surface-600-400 opacity-75"></i>
 					<span>{m.justification()}</span>
 				</h3>
 				{#if operationalScenario.justification}
-					<p class="text-gray-600">{operationalScenario.justification}</p>
+					<MarkdownRenderer content={operationalScenario.justification} />
 				{:else}
-					<p class="text-gray-600">{m.noJustification()}</p>
+					<p class="text-surface-600-400">{m.noJustification()}</p>
 				{/if}
 			</div>
 		</div>

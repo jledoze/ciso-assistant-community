@@ -1,7 +1,10 @@
 from django.urls import include, path
 
 from .views import (
+    AuditedModelsView,
     LicenseStatusView,
+    ObjectAuditTrailView,
+    TimelineEntriesView,
     get_build,
     LogEntryViewSet,
     PermissionViewSet,
@@ -11,11 +14,24 @@ from rest_framework.routers import DefaultRouter
 
 router = DefaultRouter()
 router.register(r"log-entries", LogEntryViewSet, basename="log-entries")
-router.register(r"roles", RoleViewSet, basename="roles")
 router.register(r"permissions", PermissionViewSet, basename="permissions")
+# Custom-role management is an enterprise-only feature.
+# The enterprise viewsets override the community ones (so this one override the community read-only `RoleViewSet` (`"roles"` route)).
+router.register(r"roles", RoleViewSet, basename="roles")
 
 urlpatterns = [
     path("", include(router.urls)),
     path("build/", get_build, name="get_build"),
     path("license-status/", LicenseStatusView.as_view(), name="license-status"),
+    path(
+        "object-audit-trail/",
+        ObjectAuditTrailView.as_view(),
+        name="object-audit-trail",
+    ),
+    path("audited-models/", AuditedModelsView.as_view(), name="audited-models"),
+    path(
+        "insights-timeline/",
+        TimelineEntriesView.as_view(),
+        name="insights-timeline",
+    ),
 ]

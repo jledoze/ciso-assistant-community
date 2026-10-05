@@ -57,6 +57,7 @@ We’re constantly evolving with input from users and customers. Like an octopus
 [![API Tests](https://github.com/intuitem/ciso-assistant-community/actions/workflows/backend-api-tests.yml/badge.svg)](https://github.com/intuitem/ciso-assistant-community/actions/workflows/backend-api-tests.yml)
 [![Functional Tests](https://github.com/intuitem/ciso-assistant-community/actions/workflows/functional-tests.yml/badge.svg?branch=main)](https://github.com/intuitem/ciso-assistant-community/actions/workflows/functional-tests.yml)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fab-smith%2Fciso-assistant-community.svg?type=small)](https://app.fossa.com/projects/git%2Bgithub.com%2Fab-smith%2Fciso-assistant-community?ref=badge_small)
+[![Plumber Score](https://score.getplumber.io/github.com/intuitem/ciso-assistant-community.svg)](https://score.getplumber.io/github.com/intuitem/ciso-assistant-community)
 
 ---
 
@@ -99,6 +100,104 @@ The docker compose file can be adjusted to pass extra parameters to suit your se
 ## Features
 
 ![Current features](features.png)
+
+<!-- FEATURES:START -->
+<details>
+<summary><strong>📋 Full feature list</strong> — click to expand (searchable, 69 features)</summary>
+
+**Compliance & frameworks**
+- Audit and campaigns management
+- Automatic mapping
+- Mapping explorer
+- Custom frameworks supported
+- +200 frameworks included
+- Policies management
+- Document management
+- Evidence management
+
+**Risk management**
+- Risk assessments and registers
+- EBIOS RM module
+- Threat modeling
+- Risk acceptance workflows
+- Business Impact Analysis
+- Cyber Risk Quantification
+- Vulnerability management
+- Vulnerability enrichment
+- Security advisories & CWE
+- TTP catalogs
+
+**Third-party risk**
+- Third-party risk management
+- Contracts management
+- DORA register of information
+- External security ratings
+
+**Operations & remediation**
+- Action plan tracking and prioritization
+- Findings tracking
+- Recommendations engine
+- Control plan
+- Task management
+- Kanban boards
+- Periodic checks
+- Technical posture management
+- Exceptions tracking
+- Incidents management
+- DORA incident reporting
+- Validation & approval flows
+- Email reminders
+
+**Reporting & analytics**
+- Analytics and dashboards
+- Reports generation
+- Automated quality checks
+- Advanced insights
+- Custom metrics tracking
+
+**Collaboration & productivity**
+- Assignments & respondent mode
+- Requests management
+- Quick forms
+- Comments & collaboration
+- Universal search
+- Command palette
+
+**Automation & integrations**
+- Workflow automation
+- Comprehensive REST API
+- CLI for automation
+- Data import wizard
+- Kafka integration
+- MCP support
+- Outgoing webhooks
+- Jira & ServiceNow integrations
+- Consultant features (e.g. single-domain export/import)
+
+**Security & access**
+- Flexible RBAC
+- SSO with SAML or OIDC
+- MFA with TOTP and security keys
+- SCIM provisioning
+- Audit log
+
+**Privacy**
+- GDPR processings
+
+**Programme management**
+- Project management
+- Responsibility matrices
+
+**Platform**
+- Portals & trust center
+- Custom fields
+- Multi-level domains
+- Kubernetes (Helm) deployment
+- Open Source
+- Available in +26 languages
+
+</details>
+<!-- FEATURES:END -->
 
 Upcoming features are listed on the roadmap.
 
@@ -167,14 +266,14 @@ Read more here: [AI engine](backend/chat/README.md)
 22. Cyber Resilience Act (CRA) 🇪🇺
 23. TIBER-EU 🇪🇺
 24. NIST Privacy Framework 🇺🇸
-25. TISAX (VDA ISA) v5.1 and v6.0 🚘
+25. TISAX (VDA ISA) v5.1, v6.0 and v2027 🚘
 26. ANSSI hygiene guide 🇫🇷
 27. Essential Cybersecurity Controls (ECC) 🇸🇦
 28. CIS Controls v8\* 🌐
 29. CSA CCM (Cloud Controls Matrix)\* ☁️
 30. FADP (Federal Act on Data Protection) 🇨🇭
 31. NIST SP 800-171 rev2 (2021) 🇺🇸
-32. ANSSI : recommandations de sécurité pour un système d'IA générative 🇫🇷🤖
+32. ANSSI : Recommandations de sécurité pour un système d'IA générative (v1.0) 🇫🇷🤖
 33. NIST SP 800-218: Secure Software Development Framework (SSDF) 🖥️
 34. GSA FedRAMP rev5 ☁️🇺🇸
 35. Cadre Conformité Cyber France (3CF) v1 (2021) ✈️🇫🇷
@@ -196,7 +295,7 @@ Read more here: [AI engine](backend/chat/README.md)
 51. California Consumer Privacy Act Regulations 🇺🇸
 52. NCSC Cyber Essentials 🇬🇧
 53. Directive Nationale de la Sécurité des Systèmes d'Information (DNSSI) Maroc 🇲🇦
-54. Part-IS ✈️🇪🇺
+54. Part-IS (Consolidated 16-10-2025) ✈️🇪🇺
 55. ENS Esquema Nacional de seguridad 🇪🇸
 56. Korea ISA ISMS-P 🇰🇷
 57. Swiss ICT minimum standard 🇨🇭
@@ -212,11 +311,11 @@ Read more here: [AI engine](backend/chat/README.md)
 67. International Traffic in Arms Regulations (ITAR) 🇺🇸
 68. Federal Trade Commission (FTC) Standards for Safeguarding Customer Information 🇺🇸
 69. OWASP's checklist for LLM governance and security 🌐
-70. Recommandations pour les architectures des systèmes d’information sensibles ou à diffusion restreinte (ANSSI) 🇫🇷
-71. CIS benchmark for Kubernetes v1.10 🌐
+70. ANSSI : Recommandations pour les architectures des systèmes d’information sensibles ou à diffusion restreinte (v1.2) 🇫🇷
+71. CIS Benchmarks — Kubernetes (v1.10, v2.0.1), AWS, Azure, GCP, Microsoft 365, Google Workspace, GitHub, GitLab, Debian 12/13, Ubuntu 24.04 LTS, Windows 11 🌐
 72. De tekniske minimumskrav for statslige myndigheder 🇩🇰
 73. Google SAIF framework 🤖
-74. Recommandations relatives à l'administration sécurisée des SI (ANSSI) 🇫🇷
+74. ANSSI : Recommandations relatives à l'administration sécurisée des SI (v3.0) 🇫🇷
 75. Prudential Standard CPS 230 - Operational Risk Management (APRA) 🇦🇺
 76. Prudential Standard CPS 234 - Information Security (APRA) 🇦🇺
 77. Vehicle Cyber Security Audit (VCSA) v1.1 🚘
@@ -228,7 +327,7 @@ Read more here: [AI engine](backend/chat/README.md)
 83. CCB CyberFundamentals Framework 2025 🇧🇪
 84. Prestataires de détection des incidents de sécurité (PDIS) - Référentiel d’exigences 🇫🇷
 85. Vendor Due Diligence - simple baseline - intuitem 🌐
-86. Points de contrôle Active Directory (AD) - ANSSI 🇫🇷
+86. ANSSI : Points de contrôle Active Directory (AD) (Avril 2026) 🇫🇷
 87. ISO 42001:2023 outline - Artificial Intelligence Management System, including Annex A 🤖🌐
 88. India's Digital Personal Data Protection Act (DPDPA) - 2023 🇮🇳
 89. E-ITS (Estonia's national cyber security standard) - 2024 🇪🇪
@@ -244,14 +343,14 @@ Read more here: [AI engine](backend/chat/README.md)
 99. PSSI État 🇫🇷
 100. Checklist de dossier d'homologation 🇫🇷
 101. Cahier des charges Label EBIOS RM v3.1 🇫🇷
-102. SecNumCloud v3.2 Annexe 2 : recommandations aux commanditaires ☁️🇫🇷
+102. SecNumCloud v3.2 Annexe 2 : Recommandations aux commanditaires ☁️🇫🇷
 103. CCB CyberFundamentals Small - Self assessment 🇧🇪
-104. Mitre ATT&CK v18.1 - Threat catalog 🌐
+104. Mitre ATT&CK v19.1 - Threats and Mitigations catalog 🌐
 105. Mitre D3FEND - Reference controls 🌐
 106. OWASP Top 10 Web - Threat catalog 🐝🌐
 107. OWASP MAS Threat Modelling Guide - Threat catalog 🐝📱
 108. CISA Cybersecurity Performance Goals (CPG) v2.0 🇺🇸
-109. ANSSI : Référentiel Cyber France pour la réglmentation NIS2 (ReCyF) 🇫🇷
+109. ANSSI : Référentiel Cyber France pour la réglementation NIS2 (ReCyF) 🇫🇷
 110. Cadre Conformité Cyber France (3CF) v3.1 (2026) ✈️🇫🇷
 111. Règles OIV - Secteur « Transport aérien » (2016) ✈️🇫🇷
 112. IEC 62443 series — parts 2-1, 2-4, 3-2, 3-3, 4-1, 4-2 🏭🌐
@@ -261,15 +360,23 @@ Read more here: [AI engine](backend/chat/README.md)
 116. Référentiel HAS - Certification des établissements de santé pour la qualité des soins 🇫🇷🏥
 117. Personal Data Protection Law (PDPL) 🇸🇦
 118. NCSC - Cyber Assessment Framework (CAF) v4.0 🇬🇧
+119. Algemene Beveiligingseisen voor Rijksoverheidsopdrachten (ABRO) 2026 🇳🇱
+120. Algemene Beveiligingseisen voor Defensieopdrachten (ABDO) 2019 🇳🇱
+121. ANSSI : Cybersécurité des systèmes industriels - Mesures détaillées 🇫🇷🏭
+122. Cbw (NIS2) Control Framework v1.2 🇳🇱
+123. ENISA SME Cyber Resilience Maturity Assessment (CRA) 🇪🇺
+124. ISO 27701:2025 outline - Privacy Information Management System, including Annex A 🌐
+125. Plumber CI/CD Security Checks 🖥️
+126. UNESCO AI Maturity Framework 🤖🌐
 
 ### Community contributions
 
 1. PGSSI-S (Politique Générale de Sécurité des Systèmes d'Information de Santé) 🇫🇷
-2. ANSSI : Recommandations de configuration d'un système GNU/Linux 🇫🇷
+2. ANSSI : Recommandations de configuration d'un système GNU/Linux (v2.0) 🇫🇷
 3. PSSI-MCAS (Politique de sécurité des systèmes d’information pour les ministères chargés des affaires sociales) 🇫🇷
-4. ANSSI : Recommandations pour la protection des systèmes d'information essentiels 🇫🇷
-5. ANSSI : Recommandations de sécurité pour l'architecture d'un système de journalisation 🇫🇷
-6. ANSSI : Recommandations de sécurité relatives à TLS 🇫🇷
+4. ANSSI : Recommandations pour la protection des systèmes d'information essentiels (v1.0) 🇫🇷
+5. ANSSI : Recommandations de sécurité pour l'architecture d'un système de journalisation (v2.0) 🇫🇷
+6. ANSSI : Recommandations de sécurité relatives à TLS (v1.2) 🇫🇷
 7. New Zealand Information Security Manual (NZISM) 🇳🇿
 8. Clausier de sécurité numérique du Club RSSI Santé 🇫🇷
 9. Référentiel National de Sécurité de l’Information (RNSI), MPT Algérie 🇩🇿
@@ -279,10 +386,10 @@ Read more here: [AI engine](backend/chat/README.md)
 13. PSSIE du Bénin, ANSSI Bénin 🇧🇯
 14. IGI 1300 / II 901 - Liste des exigences pour la mise en oeuvre d'un SI classifié (ANSSI) 🇫🇷
 15. Référentiel Général de Sécurité 2.0 - Annexe B2 🇫🇷
-16. Recommandations sur la sécurisation des systèmes de contrôle d'accès physique et de vidéoprotection 🇫🇷
-17. Recommandations pour un usage sécurisé d’(Open)SSH 🇫🇷
-18. Recommandations de sécurité relatives à IPsec pour la protection des flux réseau 🇫🇷
-19. Recommandations relatives à l'interconnexion d'un système d'information à internet 🇫🇷
+16. ANSSI : Recommandations sur la sécurisation des systèmes de contrôle d'accès physique et de vidéoprotection (v2.2) 🇫🇷
+17. ANSSI : Recommandations pour un usage sécurisé d’(Open)SSH (v1.3) 🇫🇷
+18. ANSSI : Recommandations de sécurité relatives à IPsec pour la protection des flux réseau (v1.1) 🇫🇷
+19. ANSSI : Recommandations relatives à l'interconnexion d'un système d'information à internet (v3.0) 🇫🇷
 20. Guides des mécanismes cryptographiques 🇫🇷
 21. Swift Customer Security Controls Framework (CSCF) v2025 🏦🌐
 22. OWASP Application Security Verification Standard (ASVS) 5 🐝🖥️
@@ -299,6 +406,9 @@ Read more here: [AI engine](backend/chat/README.md)
 33. AI Defense Matrix 🤖🌐
 34. Zero Trust for Operational Technology (ZT OT) 🇺🇸🏭
 35. T.C. CBDDO Bilgi ve İletişim Güvenliği Rehberi (BİGR) 🇹🇷
+36. NCA NCNICC-1:2025 🇸🇦
+37. NCA ECC-2:2024 🇸🇦
+38. NCA CCC-1:2020 🇸🇦
 
 <br/>
 
@@ -389,19 +499,20 @@ For the following executions, use "docker compose up" directly.
 ## Setting up CISO Assistant for development
 
 > [!WARNING]
+>
 > ### Important note for Windows users
+>
 > The best working solution for users developing on **Windows** is to use [Ubuntu](https://apps.microsoft.com/detail/9pdxgncfsczv) installed on [WSL2](https://apps.microsoft.com/detail/9p9tqf7mrm4r) (Docker is not required).
 >
 > It is now also possible to run and develop CISO Assistant natively on Windows without WSL2 nor Docker, but it will require some extra steps.
 > Please note that the native running on Windows is still in **EXPERIMENTAL PHASE** and should **NOT** be used if you are unsure of what you are doing, or if you want to ensure stability throughout development.
 > Nevertheless, we would love to hear any suggestions in order to enhance the development experience for Windows users. Please feel free to open an Issue/PR about it!
 
-
 ### Requirements
 
 - Python 3.14+
 - pip 25.3+
-- poetry 2.0+
+- uv 0.9+
 - node 24+
 - npm 10.2+
 - pnpm 10.30+
@@ -417,25 +528,27 @@ pacman -S mingw-w64-ucrt-x86_64-file mingw-w64-ucrt-x86_64-pango
 ```
 
 You will also have to add those 2 system environment variables after installing the dependencies:
+
 ```conf
 MAGIC=Full path to the `magic.mgc` file (usually `C:\msys64\ucrt64\share\misc\magic.mgc`)
 WEASYPRINT_DLL_DIRECTORIES=Same path as your MSYS2 UCRT64 binaries
 ```
 
-
 Given that the default encoding on Windows isn't `UTF-8` but `cp1252`, certain python script printing `UTF-8` characters such as emojis may cause the backend crash or malfunction in some cases (e.g. library importation).
 To avoid this issue with this project, enforce the `UTF-8` encoding by adding these 2 user environment variables:
+
 ```conf
 PYTHONUTF8=1
 PYTHONIOENCODING=utf-8:replace
 ```
 
 > [!NOTE]
+>
 > ### Known issues
+>
 > - The `libmagic` library on Windows (MIME detection) struggles to recognize an Excel file (`.xlsx`) by reading its first `2048` bits as it returns `application/octet-stream` most of the time when importing an Excel library (backend displays the warning message `[warning  ] Invalid MIME type`). This doesn't prevent the Excel file from being imported thanks to the fallback method in `backend/library/views.py:StoredLibraryViewSet.upload_library`.
 
 </details>
-
 
 ### Running the backend
 
@@ -460,7 +573,7 @@ export DJANGO_DEBUG=True
 # Default url is set to http://localhost:5173 but you can change it, e.g. to use https with a caddy proxy
 export CISO_ASSISTANT_URL=https://localhost:8443
 
-# Setup a development mailer with Mailhog for example
+# Setup a development mailer with Mailpit for example
 export EMAIL_HOST_USER=''
 export EMAIL_HOST_PASSWORD=''
 export DEFAULT_FROM_EMAIL=ciso-assistant@ciso-assistantcloud.com
@@ -547,6 +660,11 @@ export ENABLE_SANDBOX=True  # optional, default value is True in production enfi
 # Logging configuration
 export LOG_LEVEL=INFO # optional, default value is INFO. Available options: DEBUG, INFO, WARNING, ERROR, CRITICAL
 export LOG_FORMAT=plain # optional, default value is plain. Available options: json, plain
+# LOG_FORMAT=json emits one JSON object per line (timestamp, level, logger, event, ...),
+# which SIEMs (Splunk, Sentinel, ADX) ingest natively without custom parsing.
+# Set the same LOG_FORMAT=json on the frontend container to get structured JSON
+# from the SvelteKit SSR process (auth events, errors) on the same schema; the
+# backend and huey worker share this setting automatically.
 
 # Authentication options
 export AUTH_TOKEN_TTL=3600 # optional, default value is 3600 seconds (60 minutes). It defines the time to live of the authentication token
@@ -554,25 +672,25 @@ export AUTH_TOKEN_AUTO_REFRESH=True # optional, default value is True. It define
 export AUTH_TOKEN_AUTO_REFRESH_TTL=36000 # optional, default value is 36000 seconds (10 hours). It defines the time to live of the authentication token after auto refresh. You can disable it by setting it to 0.
 ```
 
-3. Install poetry
-
-Visit the poetry website for instructions: <https://python-poetry.org/docs/#installation>
-
 <details>
-<summary>[EXPERIMENTAL] How to install Poetry natively on Windows?</summary>
+<summary>[EXPERIMENTAL] Other variable for development on Windows without WSL2</summary>
 
-```shell
-python -m pip install --user pipx
-pipx install poetry
-```
+Only PostgreSQL custom variables can be configured.
+
+Use the helper scripts documented in [`tools/.windows/README.md`](tools/.windows/README.md) for more information.
 
 </details>
 
 
-4. Install required dependencies.
+3. Install uv
+
+Visit the uv website for instructions: <https://docs.astral.sh/uv/getting-started/installation/>
+
+4. Move to backend and install required dependencies.
 
 ```sh
-poetry install
+cd backend
+uv sync
 ```
 
 5. Recommended: Install the pre-commit hooks.
@@ -593,6 +711,13 @@ pre-commit install
   - `create user ciso-assistantuser with password '<POSTGRES_PASSWORD>';`
   - `grant all privileges on database ciso-assistant to ciso-assistantuser;`
 
+<details>
+<summary>[EXPERIMENTAL] Setup PostgreSQL on Windows</summary>
+
+For more information, see the documentation in [`tools/.windows/README.md`](tools/.windows/README.md).
+
+</details>
+
 7. If you want to setup s3 bucket:
 
 - Choose your s3 provider or try s3 feature with miniO with this command:
@@ -605,21 +730,34 @@ pre-commit install
 8. Apply migrations.
 
 ```sh
-poetry run python manage.py migrate
+uv run python manage.py migrate
 ```
+<details>
+<summary>[EXPERIMENTAL] Apply migration on Windows without WSL2</summary>
+
+For more information, see the documentation in [`tools/.windows/README.md`](tools/.windows/README.md).
+
+</details>
 
 9. Create a Django superuser, that will be CISO Assistant administrator.
 
 > If you have set a mailer and CISO_SUPERUSER_EMAIL variable, there's no need to create a Django superuser with `createsuperuser`, as it will be created automatically on first start. You should receive an email with a link to setup your password.
 
 ```sh
-poetry run python manage.py createsuperuser
+uv run python manage.py createsuperuser
 ```
+
+<details>
+<summary>[EXPERIMENTAL] Create a Django superuser on Windows without WSL2</summary>
+
+For more information, see the documentation in [`tools/.windows/README.md`](tools/.windows/README.md).
+
+</details>
 
 10. Run development server.
 
 ```sh
-poetry run python manage.py runserver
+uv run python manage.py runserver
 ```
 
 <details>
@@ -689,15 +827,15 @@ find . -path "*/migrations/*.pyc"  -delete
 After a change (or a clean), it is necessary to re-generate migration files:
 
 ```sh
-poetry run python manage.py makemigrations
-poetry run python manage.py migrate
+uv run python manage.py makemigrations
+uv run python manage.py migrate
 ```
 
 These migration files should be tracked by version control.
 
 ### Test suite
 
-To run API tests on the backend, simply type `poetry run pytest` in a shell in the backend folder.
+To run API tests on the backend, simply type `uv run pytest` in a shell in the backend folder.
 
 To run functional tests on the frontend, do the following actions:
 
@@ -718,18 +856,34 @@ The goal of the test harness is to prevent any regression, i.e. all the tests sh
 
 To interact with the API via Swagger or directly with HTTP calls:
 
-1. Authenticate by sending a POST request to `/api/iam/login/` with your credentials in the request body. The response will include an authentication token.
+1. Create a Personal Access Token (PAT) from your user profile in the application.
 2. Include this token in the header of subsequent requests as: `Authorization: Token <token>`
 
 ⚠️ Note: use `Token`, **not** `Bearer`.
 
-When using the interactive Swagger UI, simply log in, the token will be automatically handled for subsequent requests.
+PATs respect MFA: they are issued from an authenticated session, so an account protected by MFA stays protected. For interactive/browser flows, authentication goes through the standard login (which enforces MFA when enabled).
 
 ## Setting CISO Assistant for production
 
-The docker-compose.yml highlights a relevant configuration with a Caddy proxy in front of the frontend. It exposes API calls only for SSO. Note that docker-compose.yml exposes the full API, which is not yet recommended for production.
+The docker-compose.yml highlights a relevant configuration for testing, with a Caddy proxy in front of the frontend. It exposes the full API, which is not yet recommended for production.
 
-Set `DJANGO_DEBUG=False` for security reasons.
+For production, the config builder can be used to generate a more hardened and tailored docker-compose.yml file, though several hardening steps are still required.
+
+The following recommendations apply for production:
+- Set `DJANGO_DEBUG=False` for security reasons.
+- Pin versions to the latest production version for all images (backend, frontend, reverse proxy)
+- Harden the network configuration to expose only the relevant ports, and filter the URLs to limit full API access to trusted IP ranges.
+  If public API access is restricted and SSO is enabled, keep these endpoints reachable by the browser or identity provider:
+  - `/api/iam/sso/redirect/`
+  - `/api/accounts/saml/0/acs/`
+  - `/api/accounts/saml/0/acs/finish/`
+  - `/api/accounts/oidc/openid_connect/login/callback/`
+  - `/api/accounts/saml/0/sls/` (only with SAML single logout enabled)
+- Use non-root deployment, as explained below.
+- Use a valid certificate for the reverse proxy
+- If the reverse proxy is not running on the same host as the backend and frontend, use a VPN like wireguard between the nodes.
+- Use an encrypted volume for the database, and manage the encryption key cautiously.
+- Manage secrets in environment variables instead of putting them directly in the docker-compose.yml file.
 
 > [!NOTE]
 > The frontend cannot infer the host automatically, so you need to either set the ORIGIN variable, or the `HOST_HEADER` and `PROTOCOL_HEADER` variables. Please see [the sveltekit doc](https://kit.svelte.dev/docs/adapter-node#environment-variables-origin-protocolheader-hostheader-and-port-header) on this tricky issue. Beware that this approach does not work with "pnpm run dev", which should not be a worry for production.
@@ -743,6 +897,7 @@ Set `DJANGO_DEBUG=False` for security reasons.
 ### Non-root docker containers
 
 docker-compose.yml now relies on a non-root user 1001:1001, which is available in the image. Older deployments are using root user, which is still supported. To transition to non-root, use the following steps in the host:
+
 - docker compose down
 - update the docker-compose.yml file
 - sudo chown -R 1001:1001 db
@@ -762,18 +917,29 @@ Reference is `en.json`; coverage = share of reference keys present in each local
 
 ## Built With 💜
 
-- [Django](https://www.djangoproject.com/) - Python Web Development Framework
-- [SvelteKit](https://kit.svelte.dev/) - Frontend Framework
-- [eCharts](https://echarts.apache.org) - Charting library
-- [unovis](https://unovis.dev) - Complementary charting library
-- [Gunicorn](https://gunicorn.org/) - Python WSGI HTTP Server for UNIX
 - [Caddy](https://caddyserver.com) - The coolest reverse Proxy
-- [Gitbook](https://www.gitbook.com) - Documentation platform
-- [PostgreSQL](https://www.postgresql.org/) - Open Source RDBMS
-- [SQLite](https://www.sqlite.org/index.html) - Open Source RDBMS
+- [Django](https://www.djangoproject.com/) - Python Web Development Framework
+- [Django REST Framework](https://www.django-rest-framework.org/) - Toolkit for building Web APIs
+- [django-allauth](https://allauth.org/) - Authentication, MFA and SSO
 - [Docker](https://www.docker.com/) - Container Engine
-- [inlang](https://inlang.com/) - The ecosystem to globalize your software
+- [eCharts](https://echarts.apache.org) - Charting library
+- [Font Awesome](https://fontawesome.com) - Icons
+- [Gitbook](https://www.gitbook.com) - Documentation platform
+- [Gunicorn](https://gunicorn.org/) - Python WSGI HTTP Server for UNIX
 - [Huey](https://huey.readthedocs.io/en/latest/) - A lightweight task queue
+- [inlang](https://inlang.com/) - The ecosystem to globalize your software
+- [PostgreSQL](https://www.postgresql.org/) - Open Source RDBMS
+- [Qdrant](https://qdrant.tech) - Vector database powering the AI features
+- [Sentence Transformers](https://sbert.net) - Embeddings for semantic search
+- [Skeleton](https://www.skeleton.dev) - UI toolkit for Svelte and Tailwind
+- [SQLite](https://www.sqlite.org/index.html) - Open Source RDBMS
+- [Svelte](https://svelte.dev) & [SvelteKit](https://svelte.dev/docs/kit) - Frontend Framework
+- [Svelte Flow](https://svelteflow.dev) - Node-based graph editors
+- [Tailwind CSS](https://tailwindcss.com) - Utility-first CSS framework
+- [Typst](https://typst.app) - The new foundation for documents
+- [unovis](https://unovis.dev) - Complementary charting library
+- [Vite](https://vite.dev) - Frontend build tool
+- [WeasyPrint](https://weasyprint.org/) - HTML to PDF rendering
 
 ## Security
 

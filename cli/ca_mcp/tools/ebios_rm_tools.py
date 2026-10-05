@@ -1,10 +1,11 @@
 """EBIOS RM (Risk Management) MCP tools for CISO Assistant"""
 
 from ..client import (
+    found_line,
     make_get_request,
     make_post_request,
     make_patch_request,
-    get_paginated_results,
+    fetch_all_results,
 )
 from ..resolvers import (
     resolve_folder_id,
@@ -21,6 +22,8 @@ from ..resolvers import (
     resolve_risk_matrix_id,
     resolve_asset_id,
     resolve_entity_id,
+    _normalize_for_matching,
+    _find_terminology_match,
 )
 from ..utils.response_formatter import (
     success_response,
@@ -35,52 +38,6 @@ from ..utils.response_formatter import (
 # ============================================================================
 
 
-def _normalize_for_matching(text: str) -> str:
-    """Normalize text for fuzzy matching: lowercase, strip, remove trailing 's' for plurals"""
-    normalized = text.lower().strip()
-    # Handle common plural forms
-    if normalized.endswith("s") and len(normalized) > 2:
-        normalized = normalized[:-1]
-    # Handle underscores vs spaces
-    normalized = normalized.replace("_", " ").replace("-", " ")
-    return normalized
-
-
-def _find_terminology_match(terminologies: list, user_input: str) -> dict | None:
-    """Find a terminology that matches the user input.
-
-    Matches against:
-    - Base name field (snake_case like "organized_crime")
-    - All translations in the translations dict
-
-    Uses case-insensitive, plural-insensitive matching.
-    """
-    normalized_input = _normalize_for_matching(user_input)
-
-    for term in terminologies:
-        # Match against the base name
-        if _normalize_for_matching(term.get("name", "")) == normalized_input:
-            return term
-
-        # Match against translations
-        translations = term.get("translations", {})
-        if isinstance(translations, dict):
-            for locale, locale_data in translations.items():
-                if isinstance(locale_data, dict):
-                    translated_name = locale_data.get("name", "")
-                    if (
-                        translated_name
-                        and _normalize_for_matching(translated_name) == normalized_input
-                    ):
-                        return term
-                elif isinstance(locale_data, str):
-                    # Some translations might be stored as direct strings
-                    if _normalize_for_matching(locale_data) == normalized_input:
-                        return term
-
-    return None
-
-
 def _resolve_or_create_risk_origin(risk_origin_input: str) -> tuple[str, bool]:
     """Resolve a risk origin terminology by smart matching, or create a new one.
 
@@ -91,18 +48,13 @@ def _resolve_or_create_risk_origin(risk_origin_input: str) -> tuple[str, bool]:
         Tuple of (terminology_id, was_created)
     """
     # Fetch all risk origin terminologies
-    res = make_get_request(
+    terminologies, error = fetch_all_results(
         "/terminologies/",
         params={"field_path": "ro_to.risk_origin", "is_visible": "true"},
     )
 
-    if res.status_code != 200:
-        raise ValueError(
-            f"Failed to fetch risk origin terminologies: {res.status_code}"
-        )
-
-    data = res.json()
-    terminologies = get_paginated_results(data)
+    if error:
+        raise ValueError(f"Failed to fetch risk origin terminologies: {error}")
 
     # Try to find a match
     match = _find_terminology_match(terminologies, risk_origin_input)
@@ -149,18 +101,13 @@ def _resolve_or_create_stakeholder_category(category_input: str) -> tuple[str, b
         Tuple of (terminology_id, was_created)
     """
     # Fetch all entity relationship terminologies
-    res = make_get_request(
+    terminologies, error = fetch_all_results(
         "/terminologies/",
         params={"field_path": "entity.relationship", "is_visible": "true"},
     )
 
-    if res.status_code != 200:
-        raise ValueError(
-            f"Failed to fetch stakeholder category terminologies: {res.status_code}"
-        )
-
-    data = res.json()
-    terminologies = get_paginated_results(data)
+    if error:
+        raise ValueError(f"Failed to fetch stakeholder category terminologies: {error}")
 
     # Try to find a match
     match = _find_terminology_match(terminologies, category_input)
@@ -222,18 +169,14 @@ async def get_ebios_rm_studies(
             params["status"] = status
             filters["status"] = status
 
-        res = make_get_request("/ebios-rm/studies/", params=params)
-
-        if res.status_code != 200:
-            return http_error_response(res.status_code, res.text)
-
-        data = res.json()
-        studies = get_paginated_results(data)
+        studies, error = fetch_all_results("/ebios-rm/studies/", params=params)
+        if error:
+            return error
 
         if not studies:
             return empty_response("EBIOS RM studies", filters)
 
-        result = f"Found {len(studies)} EBIOS RM studies"
+        result = found_line(studies, "EBIOS RM studies")
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
@@ -294,18 +237,16 @@ async def get_feared_events(
             params["is_selected"] = str(is_selected).lower()
             filters["is_selected"] = is_selected
 
-        res = make_get_request("/ebios-rm/feared-events/", params=params)
-
-        if res.status_code != 200:
-            return http_error_response(res.status_code, res.text)
-
-        data = res.json()
-        feared_events = get_paginated_results(data)
+        feared_events, error = fetch_all_results(
+            "/ebios-rm/feared-events/", params=params
+        )
+        if error:
+            return error
 
         if not feared_events:
             return empty_response("feared events", filters)
 
-        result = f"Found {len(feared_events)} feared events"
+        result = found_line(feared_events, "feared events")
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
@@ -369,18 +310,14 @@ async def get_ro_to_couples(
             params["is_selected"] = str(is_selected).lower()
             filters["is_selected"] = is_selected
 
-        res = make_get_request("/ebios-rm/ro-to/", params=params)
-
-        if res.status_code != 200:
-            return http_error_response(res.status_code, res.text)
-
-        data = res.json()
-        ro_to_couples = get_paginated_results(data)
+        ro_to_couples, error = fetch_all_results("/ebios-rm/ro-to/", params=params)
+        if error:
+            return error
 
         if not ro_to_couples:
             return empty_response("RoTo couples", filters)
 
-        result = f"Found {len(ro_to_couples)} RoTo couples"
+        result = found_line(ro_to_couples, "RoTo couples")
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
@@ -443,18 +380,16 @@ async def get_stakeholders(
             params["entity"] = resolve_entity_id(entity)
             filters["entity"] = entity
 
-        res = make_get_request("/ebios-rm/stakeholders/", params=params)
-
-        if res.status_code != 200:
-            return http_error_response(res.status_code, res.text)
-
-        data = res.json()
-        stakeholders = get_paginated_results(data)
+        stakeholders, error = fetch_all_results(
+            "/ebios-rm/stakeholders/", params=params
+        )
+        if error:
+            return error
 
         if not stakeholders:
             return empty_response("stakeholders", filters)
 
-        result = f"Found {len(stakeholders)} stakeholders"
+        result = found_line(stakeholders, "stakeholders")
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
@@ -502,18 +437,16 @@ async def get_strategic_scenarios(
             params["ebios_rm_study"] = resolve_ebios_rm_study_id(ebios_rm_study)
             filters["ebios_rm_study"] = ebios_rm_study
 
-        res = make_get_request("/ebios-rm/strategic-scenarios/", params=params)
-
-        if res.status_code != 200:
-            return http_error_response(res.status_code, res.text)
-
-        data = res.json()
-        scenarios = get_paginated_results(data)
+        scenarios, error = fetch_all_results(
+            "/ebios-rm/strategic-scenarios/", params=params
+        )
+        if error:
+            return error
 
         if not scenarios:
             return empty_response("strategic scenarios", filters)
 
-        result = f"Found {len(scenarios)} strategic scenarios"
+        result = found_line(scenarios, "strategic scenarios")
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
@@ -579,18 +512,16 @@ async def get_attack_paths(
             params["is_selected"] = str(is_selected).lower()
             filters["is_selected"] = is_selected
 
-        res = make_get_request("/ebios-rm/attack-paths/", params=params)
-
-        if res.status_code != 200:
-            return http_error_response(res.status_code, res.text)
-
-        data = res.json()
-        attack_paths = get_paginated_results(data)
+        attack_paths, error = fetch_all_results(
+            "/ebios-rm/attack-paths/", params=params
+        )
+        if error:
+            return error
 
         if not attack_paths:
             return empty_response("attack paths", filters)
 
-        result = f"Found {len(attack_paths)} attack paths"
+        result = found_line(attack_paths, "attack paths")
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
@@ -639,18 +570,16 @@ async def get_operational_scenarios(
             params["ebios_rm_study"] = resolve_ebios_rm_study_id(ebios_rm_study)
             filters["ebios_rm_study"] = ebios_rm_study
 
-        res = make_get_request("/ebios-rm/operational-scenarios/", params=params)
-
-        if res.status_code != 200:
-            return http_error_response(res.status_code, res.text)
-
-        data = res.json()
-        scenarios = get_paginated_results(data)
+        scenarios, error = fetch_all_results(
+            "/ebios-rm/operational-scenarios/", params=params
+        )
+        if error:
+            return error
 
         if not scenarios:
             return empty_response("operational scenarios", filters)
 
-        result = f"Found {len(scenarios)} operational scenarios"
+        result = found_line(scenarios, "operational scenarios")
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
@@ -718,18 +647,16 @@ async def get_elementary_actions(
             params["operating_modes"] = resolve_operating_mode_id(operating_mode)
             filters["operating_mode"] = operating_mode
 
-        res = make_get_request("/ebios-rm/elementary-actions/", params=params)
-
-        if res.status_code != 200:
-            return http_error_response(res.status_code, res.text)
-
-        data = res.json()
-        actions = get_paginated_results(data)
+        actions, error = fetch_all_results(
+            "/ebios-rm/elementary-actions/", params=params
+        )
+        if error:
+            return error
 
         if not actions:
             return empty_response("elementary actions", filters)
 
-        result = f"Found {len(actions)} elementary actions"
+        result = found_line(actions, "elementary actions")
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
@@ -778,18 +705,14 @@ async def get_operating_modes(
             )
             filters["operational_scenario"] = operational_scenario
 
-        res = make_get_request("/ebios-rm/operating-modes/", params=params)
-
-        if res.status_code != 200:
-            return http_error_response(res.status_code, res.text)
-
-        data = res.json()
-        modes = get_paginated_results(data)
+        modes, error = fetch_all_results("/ebios-rm/operating-modes/", params=params)
+        if error:
+            return error
 
         if not modes:
             return empty_response("operating modes", filters)
 
-        result = f"Found {len(modes)} operating modes"
+        result = found_line(modes, "operating modes")
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
@@ -847,16 +770,12 @@ async def get_kill_chains(
     try:
         operating_mode_id = resolve_operating_mode_id(operating_mode)
 
-        res = make_get_request(
+        kill_chains, error = fetch_all_results(
             "/ebios-rm/kill-chains/",
             params={"operating_mode": operating_mode_id},
         )
-
-        if res.status_code != 200:
-            return http_error_response(res.status_code, res.text)
-
-        data = res.json()
-        kill_chains = get_paginated_results(data)
+        if error:
+            return error
 
         if not kill_chains:
             return empty_response(
@@ -872,7 +791,7 @@ async def get_kill_chains(
             )
         )
 
-        result = f"Found {len(kill_chains)} kill chain steps for operating mode\n\n"
+        result = found_line(kill_chains, "kill chain steps for operating mode") + "\n\n"
         result += "**Attack Stages:** 0=Know/Reconnaissance, 1=Enter/Initial Access, 2=Discover/Discovery, 3=Exploit/Exploitation\n\n"
         result += "|ID|Elementary Action|Stage|Highlighted|Logic Op|Antecedents|\n"
         result += "|---|---|---|---|---|---|\n"
@@ -891,10 +810,7 @@ async def get_kill_chains(
 
             antecedents = kc.get("antecedents", [])
             if antecedents:
-                antecedent_names = [a.get("str", "?") for a in antecedents[:2]]
-                antecedents_str = ", ".join(antecedent_names)
-                if len(antecedents) > 2:
-                    antecedents_str += f" (+{len(antecedents) - 2})"
+                antecedents_str = ", ".join(a.get("id", "?") for a in antecedents)
             else:
                 antecedents_str = "-"
 
@@ -1560,15 +1476,16 @@ async def create_kill_chain_step(
     - Stage 2 (Discover/Discovery): Can have antecedents from Stage 0, 1, or 2
     - Stage 3 (Exploit/Exploitation): Can have antecedents from any stage
 
-    **Important:** Antecedents must already exist as kill chain steps in this operating mode.
+    **Important:** Antecedents are kill chain step IDs of this operating mode (see get_kill_chains).
+    The same elementary action may appear in several steps of one operating mode.
 
     Args:
         operating_mode_id: Operating mode ID (required)
         elementary_action_id: Elementary action ID/name to add as a step (required)
         is_highlighted: Whether to highlight this step in visualizations
         logic_operator: "AND" or "OR" - how to combine multiple antecedents
-        antecedents: List of elementary action IDs that must precede this action
-                     (Must already be kill chain steps, stage must be <= this action's stage)
+        antecedents: List of kill chain step IDs (from get_kill_chains) that precede this step
+                     (Steps of the same operating mode, stage must be <= this action's stage)
     """
     try:
         operating_mode_id = resolve_operating_mode_id(operating_mode_id)
@@ -1608,7 +1525,7 @@ async def create_kill_chain_step(
         if antecedents:
             resolved_antecedents = []
             for ant in antecedents:
-                resolved_antecedents.append(resolve_elementary_action_id(ant))
+                resolved_antecedents.append(resolve_kill_chain_id(ant))
             payload["antecedents"] = resolved_antecedents
 
         res = make_post_request("/ebios-rm/kill-chains/", payload)
@@ -1649,6 +1566,7 @@ async def update_ebios_rm_study(
     observation: str = None,
     assets: list = None,
     compliance_assessments: list = None,
+    folder: str = None,
 ) -> str:
     """Update an EBIOS RM study (Workshop 1)
 
@@ -1667,6 +1585,7 @@ async def update_ebios_rm_study(
         observation: Observation notes
         assets: List of asset IDs/names (replaces existing)
         compliance_assessments: List of compliance assessment (audit) IDs/names for security baseline (replaces existing)
+        folder: Folder (domain) ID/name to move the study to; all study-scoped objects (feared events, RO/TO couples, stakeholders, strategic scenarios, attack paths, operational scenarios, operating modes, kill chains) follow the study
     """
     try:
         from ..resolvers import resolve_compliance_assessment_id
@@ -1687,6 +1606,8 @@ async def update_ebios_rm_study(
             payload["status"] = status
         if observation is not None:
             payload["observation"] = observation
+        if folder is not None:
+            payload["folder"] = resolve_folder_id(folder)
 
         if assets is not None:
             resolved_assets = []
@@ -2226,14 +2147,14 @@ async def update_kill_chain_step(
     - Stage 2 (Discover/Discovery): Can have antecedents from Stage 0, 1, or 2
     - Stage 3 (Exploit/Exploitation): Can have antecedents from any stage
 
-    **Important:** Antecedents must already exist as kill chain steps in the same operating mode.
+    **Important:** Antecedents are kill chain step IDs of the same operating mode (see get_kill_chains).
 
     Args:
         kill_chain_id: Kill chain step UUID (required)
         is_highlighted: Whether to highlight this step in visualizations
         logic_operator: "AND" or "OR" - how to combine multiple antecedents
-        antecedents: List of elementary action IDs that must precede this action
-                     (Must already be kill chain steps, stage must be <= this action's stage)
+        antecedents: List of kill chain step IDs (from get_kill_chains) that precede this step
+                     (Steps of the same operating mode, stage must be <= this action's stage)
     """
     try:
         resolved_kc_id = resolve_kill_chain_id(kill_chain_id)
@@ -2269,7 +2190,7 @@ async def update_kill_chain_step(
         if antecedents is not None:
             resolved_antecedents = []
             for ant in antecedents:
-                resolved_antecedents.append(resolve_elementary_action_id(ant))
+                resolved_antecedents.append(resolve_kill_chain_id(ant))
             payload["antecedents"] = resolved_antecedents
 
         if not payload:

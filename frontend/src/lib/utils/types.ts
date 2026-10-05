@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import type { ModelMapEntry } from './crud';
 import type { RiskScenarioSchema } from './schemas';
+import type { ThemeMode } from './theme';
 
 export interface User {
 	id: string;
@@ -13,8 +14,8 @@ export interface User {
 	keep_local_login: boolean;
 	date_joined: string;
 	user_groups: Record<string, any>[];
-	roles: Record<string, any>[];
-	permissions: Record<string, any>[];
+	/** Role names — `User.get_roles()` serialises `roleassignment__role__name`, not objects. */
+	roles: string[];
 	is_third_party: boolean;
 	is_auditee: boolean;
 	is_admin: boolean;
@@ -23,10 +24,14 @@ export interface User {
 	is_superuser: boolean;
 	has_mfa_enabled: boolean;
 	accessible_domains: string[];
-	domain_permissions: Record<string, string[]>;
+	/** Distinct codename sets, each sent once; `domain_permissions` points into it. */
+	permission_sets: string[][];
+	/** Folder ID → index in `permission_sets` of the codenames the user holds there. */
+	domain_permissions: Record<string, number>;
 	root_folder_id: string;
 	preferences: {
 		lang?: string;
+		ui?: { theme?: ThemeMode };
 	};
 }
 
@@ -41,11 +46,16 @@ export interface LoginRequestBody {
 }
 
 export const URL_MODEL = [
+	'notifications',
 	'folders',
 	'perimeters',
 	'risk-matrices',
 	'risk-assessments',
 	'threats',
+	'ttp-catalogs',
+	'tactics',
+	'techniques',
+	'threat-models',
 	'risk-scenarios',
 	'applied-controls',
 	'policies',
@@ -57,9 +67,14 @@ export const URL_MODEL = [
 	'teams',
 	'users',
 	'user-groups',
+	'idp-groups',
+	'service-accounts',
 	'roles',
 	'role-assignments',
 	'compliance-assessments',
+	'quick-forms',
+	'quick-form-responses',
+	'quick-form-publications',
 	'evidences',
 	'evidence-revisions',
 	'frameworks',
@@ -76,6 +91,8 @@ export const URL_MODEL = [
 	'entity-assessments',
 	'solutions',
 	'contracts',
+	'custom-fields',
+	'entity-scores',
 	'representatives',
 	'vulnerabilities',
 	'security-advisories',
@@ -93,10 +110,11 @@ export const URL_MODEL = [
 	'operating-modes',
 	'kill-chains',
 	'processings',
-	'processing-natures',
 	'security-exceptions',
 	'findings',
+	'commitments',
 	'findings-assessments',
+	'posture-assessments',
 	// privacy,
 	'processings',
 	'right-requests',
@@ -131,6 +149,9 @@ export const URL_MODEL = [
 	'quantitative-risk-hypotheses',
 	// terminologies
 	'terminologies',
+	// classifications
+	'object-classifications',
+	'classification-levels',
 	// roles,
 	'roles',
 	'permissions',
@@ -143,6 +164,9 @@ export const URL_MODEL = [
 	'responsibility-matrix-activities',
 	'responsibility-matrix-actors',
 	'responsibility-assignments',
+	// workflows
+	'workflows',
+	'workflow-versions',
 	// metrology
 	'metric-definitions',
 	'metric-instances',
@@ -151,7 +175,9 @@ export const URL_MODEL = [
 	'dashboard-widgets',
 	'dashboard-text-widgets',
 	'dashboard-builtin-widgets',
-	// policy documents
+	// document management
+	'document-containers',
+	'document-templates',
 	'managed-documents',
 	'document-revisions',
 	// presets/journeys
@@ -204,7 +230,6 @@ export interface Perimeter {
 	lc_status: string;
 	created_at: string;
 	updated_at: string;
-	is_published: boolean;
 	name: string;
 	description?: string;
 	ref_id?: string;
@@ -263,3 +288,8 @@ export interface CacheLock {
 	promise: Promise<any>;
 	resolve: (_: any) => any;
 }
+
+/** A DOM event with `currentTarget` narrowed to the element the handler is bound to. */
+export type SvelteEvent<E extends Event = Event, T extends EventTarget = Element> = E & {
+	currentTarget: EventTarget & T;
+};

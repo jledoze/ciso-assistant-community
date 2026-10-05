@@ -6,13 +6,41 @@
 	import { page } from '$app/state';
 	import TableRowActions from '$lib/components/TableRowActions/TableRowActions.svelte';
 	import { booleanDisplay } from '$lib/utils/boolean-display';
-	import { ISO_8601_REGEX } from '$lib/utils/constants';
-	import { CUSTOM_ACTIONS_COMPONENT, getFieldComponentMap, URL_MODEL_MAP } from '$lib/utils/crud';
+	import { DATE_FIELDS_TO_FORMAT, ISO_8601_REGEX } from '$lib/utils/constants';
+	import {
+		CUSTOM_ACTIONS_COMPONENT,
+		getFieldComponentMap,
+		isFieldFlagEnabled,
+		URL_MODEL_MAP,
+		urlModelForDjangoName
+	} from '$lib/utils/crud';
+
+	// Presentational row weighting, declared per model in listViewFields.rowEmphasis.
+	function rowEmphasisClass(row: TableSource): string {
+		const config = listViewFields[URLModel]?.rowEmphasis;
+		if (!config) return '';
+		const expected = 'equals' in config ? config.equals : true;
+		return row.meta?.[config.field] === expected ? (config.class ?? 'font-semibold') : '';
+	}
+
+	// A filter on a flag-gated field must go away with its flag, like its column does.
+	function filtersForActiveFlags(urlModel: string) {
+		const filters = listViewFields[urlModel].filters ?? {};
+		const flaggedFields = URL_MODEL_MAP[urlModel]?.flaggedFields;
+		if (!flaggedFields) return filters;
+		const featureFlags = page.data?.featureflags ?? {};
+		return Object.fromEntries(
+			Object.entries(filters).filter(([field]) => {
+				return isFieldFlagEnabled(flaggedFields[field], featureFlags);
+			})
+		);
+	}
 	import { safeTranslate, unsafeTranslate } from '$lib/utils/i18n';
 	import { toCamelCase } from '$lib/utils/locales.js';
 	import { onMount, tick, untrack } from 'svelte';
+	import { getToastStore } from '$lib/components/Toast/stores';
+	import { applyUnreadCount } from '$lib/utils/stores';
 
-	import { tableA11y } from '$lib/components/ModelTable/actions';
 	// Types
 	import { browser } from '$app/environment';
 	import LecChartPreview from '$lib/components/ModelTable/field/LecChartPreview.svelte';
@@ -26,26 +54,36 @@
 	import { contextMenuActions, listViewFields, getBatchActions } from '$lib/utils/table';
 	import { tableFilterStates } from '$lib/utils/stores';
 	import BatchActionBar from './BatchActionBar.svelte';
+	import ColumnSelector from './ColumnSelector.svelte';
 	import type { urlModel } from '$lib/utils/types.js';
 	import { countMasked, isMaskedPlaceholder } from '$lib/utils/related-visibility';
 	import { m } from '$paraglide/messages';
 	import { getLocale } from '$paraglide/runtime';
-	import type { SvelteEvent } from '@skeletonlabs/skeleton-svelte';
+	import type { SvelteEvent } from '$lib/utils/types';
 	import { DataHandler, type State } from '@vincjo/datatables/remote';
 	import { defaults, superForm, type SuperValidated } from 'sveltekit-superforms';
 	import { zod4 as zod } from 'sveltekit-superforms/adapters';
 	import { z } from 'zod';
 	import type { FormDataShape } from '$lib/utils/schemas';
-	import { loadTableData } from './handler';
+	import { getParams, loadTableData } from './handler';
 	import Pagination from './Pagination.svelte';
 	import RowCount from './RowCount.svelte';
 	import RowsPerPage from './RowsPerPage.svelte';
 	import Search from './Search.svelte';
 	import Th from './Th.svelte';
 	import ThFilter from './ThFilter.svelte';
-	import { canPerformAction } from '$lib/utils/access-control';
+	import {
+		canPerformAction,
+		canPerformActionOnObject,
+		hasPermissionAnywhere
+	} from '$lib/utils/access-control';
 	import { ContextMenu } from 'bits-ui';
-	import { tableHandlers, tableStates } from '$lib/utils/stores';
+	import {
+		tableHandlers,
+		tableRefreshers,
+		tableStates,
+		tableColumnStates
+	} from '$lib/utils/stores';
 	import DeleteConfirmModal from '$lib/components/Modals/DeleteConfirmModal.svelte';
 	import PromptConfirmModal from '$lib/components/Modals/PromptConfirmModal.svelte';
 	import {
@@ -81,6 +119,10 @@
 		displayActions?: boolean;
 		disableCreate?: boolean;
 		disableEdit?: boolean;
+		// A model with no edit form can still have a field worth changing in bulk (an
+		// inbox's read flag), so this is separable from `disableEdit` -- which it
+		// defaults to, leaving existing callers unaffected.
+		disableBatchEdit?: boolean;
 		disableDelete?: boolean;
 		disableView?: boolean;
 		identifierField?: string;
@@ -89,6 +131,8 @@
 		baseEndpoint?: string;
 		detailQueryParameter?: string;
 		fields?: string[];
+		columnSelector?: boolean;
+		columnStateKey?: string;
 		canSelectObject?: boolean;
 		overrideFilters?: { [key: string]: any[] };
 		defaultFilters?: { [key: string]: any[] };
@@ -98,7 +142,9 @@
 		forcePreventDelete?: boolean;
 		forcePreventEdit?: boolean;
 		expectedCount?: number;
+		loading?: boolean;
 		onFilterChange?: (filters: Record<string, any>) => void;
+		onQueryChange?: (query: string) => void;
 		quickFilters?: import('svelte').Snippet<[{ [key: string]: any }, typeof _form, () => void]>;
 		optButton?: import('svelte').Snippet;
 		selectButton?: import('svelte').Snippet;
@@ -108,10 +154,17 @@
 		actionsBody?: import('svelte').Snippet;
 		actionsHead?: import('svelte').Snippet;
 		tail?: import('svelte').Snippet;
+		// Table-scoped batch actions merged into the batch bar next to the child
+		// model's global batchActions. The caller pre-gates them (DetailView only
+		// passes them when the user can change the parent object); this component
+		// only applies the disableDelete/disableEdit filters — never the
+		// child-model permission filter, which would ask the wrong question for
+		// parent_action entries.
+		extraBatchActions?: import('$lib/utils/table').TableBatchAction[];
 	}
 
 	let {
-		source = { head: [], body: [] },
+		source = { head: {}, body: [] },
 		interactive = true,
 		search = true,
 		thFilter = false,
@@ -123,17 +176,18 @@
 		orderBy = undefined,
 		element = 'table',
 		text = 'text-xs',
-		backgroundColor = 'bg-white',
+		backgroundColor = 'bg-surface-50-950',
 		color = '',
 		regionHead = '',
-		regionHeadCell = 'uppercase bg-white text-gray-700',
-		regionBody = 'bg-white',
+		regionHeadCell = 'bg-surface-50-950 text-surface-700-300',
+		regionBody = 'bg-surface-50-950',
 		regionCell = 'max-w-[65ch] max-h-[8em] overflow-hidden hover:overflow-y-auto',
 		regionFoot = '',
 		regionFootCell = '',
 		displayActions = true,
 		disableCreate = false,
 		disableEdit = false,
+		disableBatchEdit = undefined,
 		disableDelete = false,
 		disableView = false,
 		identifierField = 'id',
@@ -142,6 +196,8 @@
 		baseEndpoint = `/${URLModel}`,
 		detailQueryParameter = $bindable(),
 		fields = [],
+		columnSelector = undefined,
+		columnStateKey = undefined,
 		canSelectObject = false,
 		overrideFilters = {},
 		defaultFilters = {},
@@ -149,13 +205,15 @@
 		tableFilters = URLModel &&
 		listViewFields[URLModel] &&
 		Object.hasOwn(listViewFields[URLModel], 'filters')
-			? listViewFields[URLModel].filters
+			? filtersForActiveFlags(URLModel)
 			: {},
 		folderId = '',
 		forcePreventDelete = false,
 		forcePreventEdit = false,
 		expectedCount = undefined,
+		loading = false,
 		onFilterChange = () => {},
+		onQueryChange = () => {},
 		quickFilters,
 		optButton,
 		selectButton,
@@ -164,23 +222,39 @@
 		actions,
 		actionsBody,
 		actionsHead,
-		tail
+		tail,
+		extraBatchActions = []
 	}: Props = $props();
 
 	const modalStore: ModalStore = getModalStore();
 
 	let model = $derived(URL_MODEL_MAP[URLModel]);
+	// Models keeping some fields writable on built-in rows (BUILTIN_EDITABLE_FIELDS).
+	const BUILTIN_EDITABLE_URL_MODELS = [
+		'terminologies',
+		'entities',
+		'asset-class',
+		'folders',
+		'object-classifications'
+	];
+	// A field's flag(s) can be a single flag name or a list (shown if ANY is on).
+	// Hidden only once every listed flag is a known, explicitly-false feature flag.
+	function isFieldHiddenByFeatureFlags(
+		flaggedFields: Record<string, string | string[]> | undefined,
+		key: string
+	) {
+		if (!flaggedFields || !Object.hasOwn(flaggedFields, key)) return false;
+		const flags = ([] as string[]).concat(flaggedFields[key]);
+		return flags.every(
+			(flag) =>
+				Object.hasOwn(page.data?.featureflags ?? {}, flag) &&
+				page.data?.featureflags[flag] === false
+		);
+	}
+
 	const tableSource: TableSource = $derived(
 		Object.keys(source.head)
-			.filter(
-				(key) =>
-					!(
-						model?.flaggedFields &&
-						Object.hasOwn(model.flaggedFields, key) &&
-						Object.hasOwn(page.data?.featureflags, model.flaggedFields[key]) &&
-						page.data?.featureflags[model.flaggedFields[key]] === false
-					)
-			)
+			.filter((key) => !isFieldHiddenByFeatureFlags(model?.flaggedFields, key))
 			.reduce(
 				(acc, key) => {
 					acc.head[key] = source.head[key];
@@ -190,15 +264,120 @@
 			)
 	);
 
-	function onRowClick(
-		event: SvelteEvent<MouseEvent | KeyboardEvent, HTMLTableRowElement>,
-		rowIndex: number
-	): void {
+	// Column visibility & order, persisted per URLModel through the column selector.
+	const allColumns = $derived(
+		Object.entries(tableSource.head).map(([key, label]) => ({ key, label: label as string }))
+	);
+	const allColumnKeys = $derived(allColumns.map((c) => c.key));
+	// A page-provided `fields` curation is the default visible set; otherwise the generic list-view default.
+	const defaultColumns = $derived(
+		(fields.length > 0
+			? fields
+			: URLModel && listViewFields[URLModel]?.body
+				? listViewFields[URLModel].body
+				: allColumnKeys
+		).filter((key) => allColumnKeys.includes(key))
+	);
+	// Offered on standalone list pages, or wherever a page opts in explicitly (even alongside `fields`).
+	const showColumnSelector = $derived(
+		(columnSelector ?? Boolean(deleteForm)) &&
+			Boolean(URLModel) &&
+			(columnSelector === true || isStandaloneTable) &&
+			(columnSelector === true || fields.length === 0) &&
+			allColumns.length > 1
+	);
+	// Persistence key: distinct per embedded table when set, else the shared per-model key.
+	const stateKey = $derived(columnStateKey ?? URLModel);
+	// Stored choice, with stale keys dropped and a fallback to defaults so a table is never empty.
+	const storedColumns = $derived(stateKey ? $tableColumnStates[stateKey] : undefined);
+	const sanitizedStored = $derived(storedColumns?.filter((key) => allColumnKeys.includes(key)));
+	const visibleColumns = $derived(sanitizedStored?.length ? sanitizedStored : defaultColumns);
+	// Keys to render, in order. Without the selector, keep natural head order (behaviour unchanged).
+	const renderColumnKeys = $derived(
+		showColumnSelector
+			? visibleColumns
+			: allColumnKeys.filter((key) => fields.length === 0 || fields.includes(key))
+	);
+	$effect(() => {
+		if (fields.length > 0 && allColumnKeys.length > 0 && renderColumnKeys.length === 0) {
+			console.warn(
+				`ModelTable(${URLModel}): none of \`fields\` [${fields.join(', ')}] match source.head keys [${allColumnKeys.join(', ')}] — table will render no columns. Build head with headData().`
+			);
+		}
+	});
+
+	// Order-sensitive so a pure reorder of the default set still persists instead of resetting.
+	const sameAsDefault = (cols: string[]) =>
+		cols.length === defaultColumns.length && cols.every((key, i) => defaultColumns[i] === key);
+
+	function setVisibleColumns(visible: string[]) {
+		if (!stateKey) return;
+		if (sameAsDefault(visible)) {
+			resetColumns();
+			return;
+		}
+		$tableColumnStates = { ...$tableColumnStates, [stateKey]: visible };
+	}
+
+	function resetColumns() {
+		if (!stateKey) return;
+		const next = { ...$tableColumnStates };
+		delete next[stateKey];
+		$tableColumnStates = next;
+	}
+
+	/**
+	 * Open the object a row points at, rather than the row itself. Returns true when it
+	 * handled the click. The PATCH is fire-and-forget so navigation never waits on it.
+	 */
+	function followRowNavigation(rowMetaData: Record<string, any>, newTab: boolean): boolean {
+		const nav = listViewFields[URLModel]?.rowNavigation;
+		if (!nav) return false;
+
+		const marked =
+			nav.markField && rowMetaData[nav.markField] === false
+				? fetch(`/${URLModel}/${rowMetaData[identifierField]}/${nav.markField}`, {
+						method: 'PATCH',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ [nav.markField]: true })
+					})
+						.then((res) => (res.ok ? res.json() : null))
+						.then(applyUnreadCount)
+						.catch((error) => console.error(`Could not mark ${nav.markField}:`, error))
+				: Promise.resolve();
+
+		const targetModel = urlModelForDjangoName(rowMetaData[nav.modelField]);
+		const targetId = rowMetaData[nav.idField];
+		if (!targetModel || !targetId) {
+			// Unmapped model, or a target deleted under the row: still counts as read, so
+			// only the navigation is skipped. Refetching before the PATCH lands would
+			// bring the row back unread.
+			marked.finally(() => handler.invalidate());
+			return true;
+		}
+
+		if (newTab) {
+			window.open(`/${targetModel}/${targetId}`, '_blank', 'noopener');
+			marked.finally(() => handler.invalidate());
+		} else goto(`/${targetModel}/${targetId}`, { breadcrumbAction: 'push' });
+		return true;
+	}
+
+	function onRowClick(event: SvelteEvent<MouseEvent, HTMLTableRowElement>, rowIndex: number): void {
 		if (!interactive) return;
 		event.preventDefault();
 		event.stopPropagation();
 		const rowMetaData = $rows[rowIndex].meta;
 		if (!rowMetaData[identifierField] || !URLModel) return;
+
+		const newTab = event.metaKey || event.ctrlKey;
+		if (followRowNavigation(rowMetaData, newTab)) return;
+
+		const detailURL = `/${URLModel}/${rowMetaData[identifierField]}${detailQueryParameter}`;
+		if (newTab) {
+			window.open(detailURL, '_blank', 'noopener');
+			return;
+		}
 
 		const preferredLabel =
 			URLModel === 'reference-controls' ? rowMetaData.name || rowMetaData.ref_id : undefined;
@@ -210,17 +389,10 @@
 			rowMetaData.label ||
 			rowMetaData[identifierField];
 
-		goto(`/${URLModel}/${rowMetaData[identifierField]}${detailQueryParameter}`, {
+		goto(detailURL, {
 			label,
 			breadcrumbAction: 'push'
 		});
-	}
-
-	function onRowKeydown(
-		event: SvelteEvent<KeyboardEvent, HTMLTableRowElement>,
-		rowIndex: number
-	): void {
-		if (['Enter', 'Space'].includes(event.code)) onRowClick(event, rowIndex);
 	}
 
 	detailQueryParameter = detailQueryParameter ? `?${detailQueryParameter}` : '';
@@ -228,6 +400,22 @@
 	const user = page.data.user;
 
 	const isRelatedField = (fieldName: string): boolean => relatedFieldNames.has(fieldName);
+	const nonNavigableRelatedFields = new Set(['qualifications', 'relationship', 'nature']);
+	const getRelatedFieldHref = (
+		fieldName: string,
+		id: string,
+		options: { fallbackToDashedField?: boolean } = {}
+	): string | undefined => {
+		if (nonNavigableRelatedFields.has(fieldName)) return undefined;
+		const relatedUrlModel = model?.foreignKeyFields?.find(
+			(field) => field.field === fieldName
+		)?.urlModel;
+		const urlModel =
+			relatedUrlModel ?? (options.fallbackToDashedField ? fieldName.replace(/_/g, '-') : undefined);
+
+		if (!urlModel) return undefined;
+		return `/${urlModel}/${id}`;
+	};
 
 	let classProp = ''; // Replacing $$props.class
 
@@ -260,29 +448,72 @@
 
 	const hiddenRowCount = $derived(typeof expectedCount === 'number' ? expectedCount : 0);
 
-	$tableHandlers[baseEndpoint] = handler;
+	// A table handed its rows up front has no model or endpoint ("/undefined"): the
+	// remote handler would poll it and clear the seeded rows. A bare baseEndpoint is
+	// still remote.
+	const hasRemoteSource = Boolean(URLModel) || baseEndpoint !== '/undefined';
 
-	handler.onChange((state: State) =>
-		loadTableData({
-			state,
-			URLModel,
-			endpoint: baseEndpoint,
-			fields:
-				fields.length > 0
-					? { head: fields, body: fields }
-					: {
-							head:
-								typeof tableSource.head[0] === 'string'
-									? Object.values(tableSource.head)
-									: Object.keys(tableSource.head),
-							body:
-								typeof tableSource.body[0] === 'string'
-									? Object.values(tableSource.body)
-									: Object.keys(tableSource.body)
-						},
-			featureFlags: page.data?.featureflags
-		})
-	);
+	if (hasRemoteSource) $tableHandlers[baseEndpoint] = handler;
+
+	const toastStore = getToastStore();
+
+	// Rows arrive from the API, so on a slow connection an empty table would
+	// otherwise be indistinguishable from a table with no data loaded. Requests
+	// can overlap (search, sort, filters), so count them rather than flag them,
+	// and only show placeholders until the first page has landed: a later
+	// refetch keeps the previous rows on screen.
+	let inFlight = $state(0);
+	let hasLoadedOnce = $state(false);
+	const isFetching = $derived(inFlight > 0 && !hasLoadedOnce);
+	let currentLoad: Promise<any[]> = Promise.resolve([]);
+
+	if (hasRemoteSource) {
+		// The trigger handler calls our reload synchronously before its first
+		// await, so once invalidate() returns, currentLoad is the new request.
+		$tableRefreshers[baseEndpoint] = () => {
+			handler.invalidate();
+			return currentLoad;
+		};
+		handler.onChange((state: State) => {
+			const query = getParams(state);
+			query.delete('offset');
+			query.delete('limit');
+			onQueryChange(query.toString());
+			inFlight += 1;
+			// Per request, so a failure cannot mask a success that overlapped it.
+			let failed = false;
+			currentLoad = loadTableData({
+				state,
+				URLModel,
+				endpoint: baseEndpoint,
+				fields:
+					showColumnSelector && allColumnKeys.length > 0
+						? { head: allColumnKeys, body: allColumnKeys }
+						: fields.length > 0
+							? { head: fields, body: fields }
+							: {
+									head:
+										typeof tableSource.head[0] === 'string'
+											? Object.values(tableSource.head)
+											: Object.keys(tableSource.head),
+									body:
+										typeof tableSource.body[0] === 'string'
+											? Object.values(tableSource.body)
+											: Object.keys(tableSource.body)
+								},
+				featureFlags: page.data?.featureflags,
+				onError: (error) => {
+					failed = true;
+					console.error(error);
+					toastStore.trigger({ message: m.anErrorOccurred(), preset: 'error' });
+				}
+			}).finally(() => {
+				inFlight -= 1;
+				if (!failed) hasLoadedOnce = true;
+			});
+			return currentLoad;
+		});
+	}
 
 	onMount(() => {
 		if (orderBy) {
@@ -290,6 +521,13 @@
 				? handler.sortAsc(orderBy.identifier)
 				: handler.sortDesc(orderBy.identifier);
 		}
+		return () => {
+			if (hasRemoteSource)
+				tableRefreshers.update((r) => {
+					delete r[baseEndpoint];
+					return r;
+				});
+		};
 	});
 
 	const actionsURLModel = URLModel;
@@ -301,84 +539,78 @@
 		(Object.hasOwn(row?.meta, 'reference_count') && row?.meta?.reference_count > 0) ||
 		['severity_changed', 'status_changed'].includes(row?.meta?.entry_type) ||
 		forcePreventDelete;
-	const preventEdit = (row: TableSource) => forcePreventEdit;
+	const preventEdit = (row: TableSource) =>
+		(row?.meta?.builtin && !BUILTIN_EDITABLE_URL_MODELS.includes(URLModel)) || forcePreventEdit;
 
 	const tableURLModel = URLModel;
 
 	let contextMenuOpenRow: TableSource | undefined = $state(undefined);
 
-	const filters = source?.filters ?? tableFilters;
-	const filteredFields = Object.keys(filters);
-	// Only persist filters on standalone list pages, not embedded sub-tables
-	const isStandaloneTable = baseEndpoint === `/${URLModel}`;
-	const filterStoreKey = `${page.url.pathname}::${baseEndpoint}`;
-	const storedFilters = isStandaloneTable ? ($tableFilterStates[filterStoreKey] ?? {}) : {};
-	// Check if any filter-related URL params exist
-	const hasUrlFilterParams = filteredFields.some(
-		(field) => page.url.searchParams.getAll(field).length > 0
-	);
-	const filterValues: { [key: string]: any } = $state(
-		Object.fromEntries(
+	const filters = $derived(source?.filters ?? tableFilters);
+	const filteredFields = $derived(Object.keys(filters));
+	// A filter emits one query param per key by default; `params` lets one widget drive several
+	// (a date range emits both bounds).
+	const paramsOf = (field: string): string[] => filters[field]?.params ?? [field];
+	// Standalone list pages only: offer the column selector (embedded tables pass
+	// a curated `fields` prop) and sync filters with the URL.
+	const isStandaloneTable = $derived(hasRemoteSource && baseEndpoint === `/${URLModel}`);
+	// Embedded tables share the page URL with sibling tables (DetailView keeps
+	// visited tabs mounted) and their filter names overlap (status, owner, ...):
+	// syncing them would leak one table's filters into another. They persist
+	// through the filter store only.
+	const syncFiltersToUrl = $derived(isStandaloneTable);
+	// Unique per parent object + tab (baseEndpoint carries the parent id).
+	// $derived so it updates when this instance is reused for a different
+	// object (DetailView.svelte keys tabs by model name, not by parent id).
+	const filterStoreKey = $derived(`${page.url.pathname}::${baseEndpoint}`);
+	// Order-insensitive fingerprint of one field's selection. Values are
+	// `{ value, param? }` objects or bare strings (defaultFilters allows both).
+	const filterFingerprint = (field: string, values: any[] = []) =>
+		values
+			.map((v) =>
+				typeof v === 'object' && v !== null ? `${v.param ?? field}=${v.value}` : `${field}=${v}`
+			)
+			.sort()
+			.join('&');
+	const isDefaultFilterState = (state: Record<string, any[]>) =>
+		filteredFields.every(
+			(field) =>
+				filterFingerprint(field, state[field]) === filterFingerprint(field, defaultFilters[field])
+		);
+
+	function seedFilterValues() {
+		const stored = $tableFilterStates[filterStoreKey] ?? {};
+		const urlParams = syncFiltersToUrl ? page.url.searchParams : new URLSearchParams();
+		// Check if any filter-related URL params exist
+		const hasUrlFilterParams = filteredFields.some((field) =>
+			paramsOf(field).some((param: string) => urlParams.getAll(param).length > 0)
+		);
+		return Object.fromEntries(
 			filteredFields.map((field: string) => {
-				const urlValues = page.url.searchParams.getAll(field).map((value) => ({ value }));
+				const urlValues = paramsOf(field).flatMap((param: string) =>
+					urlParams.getAll(param).map((value) => ({ value, param }))
+				);
 				if (urlValues.length > 0) return [field, urlValues];
 				// Restore persisted filters only when no URL filter params exist at all
-				if (!hasUrlFilterParams && field in storedFilters) {
-					return [field, storedFilters[field] ?? []];
+				if (!hasUrlFilterParams && field in stored) {
+					return [field, stored[field] ?? []];
 				}
 				const defaultValue = defaultFilters[field] || [];
 				return [field, defaultValue];
 			})
-		)
-	);
+		);
+	}
+
+	const filterValues: { [key: string]: any } = $state(seedFilterValues());
 	$effect(() => onFilterChange(filterValues));
 
 	run(() => {
-		hideFilters = hideFilters || !Object.entries(filters).some(([_, filter]) => !filter.hide);
-	});
-
-	$effect(() => {
-		for (const field of filteredFields) {
-			const filterValue = filterValues[field];
-			const overrideFilterValue = overrideFilters[field];
-			const finalFilterValue = overrideFilterValue || filterValue;
-
-			const fieldFilterParams = finalFilterValue
-				? finalFilterValue.map((v: Record<string, any>) => v.value)
-				: [];
-			handler.filter(fieldFilterParams, field);
-			page.url.searchParams.delete(field);
-			if (finalFilterValue) {
-				finalFilterValue.forEach(({ value }) => page.url.searchParams.append(field, value));
-			}
-		}
-		history.replaceState(history.state, '', page.url.pathname + page.url.search);
-		// Sync the current crumb's href with the new filter query.
-		breadcrumbs.update((crumbs) => {
-			if (crumbs.length < 2) return crumbs;
-			const last = crumbs[crumbs.length - 1];
-			const lastPath = last.href?.split('?')[0];
-			if (lastPath !== page.url.pathname) return crumbs;
-			const newHref = page.url.pathname + page.url.search;
-			if (last.href === newHref) return crumbs;
-			const next = crumbs.slice();
-			next[next.length - 1] = { ...last, href: newHref };
-			return next;
-		});
-		// untracked so resetFilters can delete the entry without retriggering us
-		if (isStandaloneTable) {
-			untrack(() => {
-				$tableFilterStates[filterStoreKey] = { ...filterValues };
-			});
-		}
-		setTimeout(() => {
-			handler.invalidate();
-		}, 10);
+		hideFilters = hideFilters || !Object.entries(filters).some(([_, filter]) => !filter?.hide);
 	});
 
 	const filterInitialData: Record<string, string[]> = {};
-	// convert URL search params and default filters to filter initial data
-	for (const [key, value] of page.url.searchParams) {
+	// convert URL search params (standalone only) and seeded filters to filter initial data
+	for (const [key, value] of syncFiltersToUrl ? page.url.searchParams : []) {
 		filterInitialData[key] ??= [];
 		filterInitialData[key].push(value);
 	}
@@ -403,10 +635,90 @@
 		validationMethod: 'auto'
 	});
 
+	// Reseed + sync/persist in one effect: a scope change (instance reused for
+	// a different object) must finish reseeding before anything is written
+	// under the new key -- two separate effects can't guarantee that order.
+	let previousFilterStoreKey = filterStoreKey;
 	$effect(() => {
-		if (page.form?.form?.posted && page.form?.form?.valid) {
+		if (filterStoreKey !== previousFilterStoreKey) {
+			previousFilterStoreKey = filterStoreKey;
+			const fresh = seedFilterValues();
+			Object.assign(filterValues, fresh);
+			_form.form.update((data) => ({
+				...data,
+				...Object.fromEntries(
+					Object.entries(fresh).map(([f, v]: [string, any]) => [
+						f,
+						(v ?? []).map((x: any) => x.value)
+					])
+				)
+			}));
+		}
+
+		for (const field of filteredFields) {
+			const finalFilterValue = overrideFilters[field] || filterValues[field] || [];
+
+			const buckets: Record<string, any> = Object.fromEntries(
+				paramsOf(field).map((param: string) => [param, []])
+			);
+			for (const v of finalFilterValue) {
+				(buckets[v.param ?? field] ??= []).push(v.value);
+			}
+			for (const [param, values] of Object.entries(buckets)) {
+				handler.filter(values, param);
+				if (!syncFiltersToUrl) continue;
+				page.url.searchParams.delete(param);
+				values.forEach((value: string) => page.url.searchParams.append(param, value));
+			}
+		}
+		if (syncFiltersToUrl) {
+			history.replaceState(history.state, '', page.url.pathname + page.url.search);
+			// Sync the current crumb's href with the new filter query.
+			breadcrumbs.update((crumbs) => {
+				if (crumbs.length < 2) return crumbs;
+				const last = crumbs[crumbs.length - 1];
+				const lastPath = last.href?.split('?')[0];
+				if (lastPath !== page.url.pathname) return crumbs;
+				const newHref = page.url.pathname + page.url.search;
+				if (last.href === newHref) return crumbs;
+				const next = crumbs.slice();
+				next[next.length - 1] = { ...last, href: newHref };
+				return next;
+			});
+		}
+		// untracked so resetFilters can delete the entry without retriggering us.
+		// A default selection isn't stored: seeding falls back to defaultFilters
+		// anyway, so untouched tables leave no entry behind in localStorage.
+		untrack(() => {
+			if (!isDefaultFilterState(filterValues)) {
+				$tableFilterStates[filterStoreKey] = { ...filterValues };
+			} else if (filterStoreKey in $tableFilterStates) {
+				const next = { ...$tableFilterStates };
+				delete next[filterStoreKey];
+				$tableFilterStates = next;
+			}
+		});
+		if (hasRemoteSource)
+			setTimeout(() => {
+				handler.invalidate();
+			}, 10);
+	});
+
+	// Refetch when the page reloads its data (invalidateAll() swaps page.url for a
+	// new URL object). Standalone tables get this from syncing filters with the
+	// URL above; embedded ones no longer touch it, so track it here.
+	let pageUrlSeen = false;
+	$effect(() => {
+		page.url;
+		if (!pageUrlSeen) return void (pageUrlSeen = true);
+		if (hasRemoteSource && !syncFiltersToUrl) untrack(() => handler.invalidate());
+	});
+
+	$effect(() => {
+		if (hasRemoteSource && page.form?.form?.posted && page.form?.form?.valid) {
 			console.debug('Form posted, invalidating table');
-			handler.invalidate();
+			// untracked: the reload writes inFlight, which would retrigger this effect
+			untrack(() => handler.invalidate());
 		}
 	});
 
@@ -425,52 +737,45 @@
 							page.params.id ||
 							user.root_folder_id
 					})
-				: Object.hasOwn(user.permissions, `add_${model.name}`)
+				: hasPermissionAnywhere(user, `add_${model.name}`)
 			: false
 	);
+	// Library-managed content: authored in the library builder, never from the table.
+	const LIBRARY_MANAGED_URL_MODELS = ['quick-forms'];
 	let contextMenuCanEditObject = $derived(
 		(model
-			? page.params.id
-				? canPerformAction({
-						user,
-						action: 'change',
-						model: model.name,
-						domain:
-							model.name === 'folder'
-								? contextMenuOpenRow?.meta.id
-								: (contextMenuOpenRow?.meta.folder?.id ??
-									contextMenuOpenRow?.meta.folder ??
-									user.root_folder_id)
-					})
-				: Object.hasOwn(user.permissions, `change_${model.name}`)
+			? canPerformActionOnObject({
+					user,
+					action: 'change',
+					model: model.name,
+					object: contextMenuOpenRow?.meta
+				})
 			: false) &&
 			(!(contextMenuOpenRow?.meta.builtin || contextMenuOpenRow?.meta.urn) ||
-				URLModel === 'terminologies' ||
-				URLModel === 'entities')
+				BUILTIN_EDITABLE_URL_MODELS.includes(URLModel))
 	);
 
 	let contextMenuDisplayEdit = $derived(
 		contextMenuCanEditObject &&
 			URLModel &&
-			!['frameworks', 'risk-matrices', 'ebios-rm'].includes(URLModel)
+			!disableEdit &&
+			!['frameworks', 'risk-matrices', 'ebios-rm', ...LIBRARY_MANAGED_URL_MODELS].includes(URLModel)
 	);
 
+	// The context menu ignored disableEdit/disableView entirely, so a model that
+	// suppressed them in the row actions still offered them on right-click. View
+	// matches TableRowActions: builtin/urn restricts editing, never reading.
+	let contextMenuDisplayView = $derived(!disableView);
+
 	let contextMenuCanDeleteObject = $derived(
-		!preventDelete(contextMenuOpenRow ?? { head: [], body: [], meta: [] }) &&
+		!preventDelete(contextMenuOpenRow ?? { head: {}, body: [], meta: [] }) &&
 			(model
-				? page.params.id
-					? canPerformAction({
-							user,
-							action: 'delete',
-							model: model.name,
-							domain:
-								model.name === 'folder'
-									? contextMenuOpenRow?.meta.id
-									: (contextMenuOpenRow?.meta.folder?.id ??
-										contextMenuOpenRow?.meta.folder ??
-										user.root_folder_id)
-						})
-					: Object.hasOwn(user.permissions, `delete_${model.name}`)
+				? canPerformActionOnObject({
+						user,
+						action: 'delete',
+						model: model.name,
+						object: contextMenuOpenRow?.meta
+					})
 				: false)
 	);
 
@@ -541,7 +846,11 @@
 		filteredFields?.reduce((acc, field) => acc + filterValues?.[field]?.length, 0)
 	);
 
+	// Bumped on reset so filters holding their own state (date ranges) remount cleared.
+	let filterResetKey = $state(0);
+
 	async function resetFilters() {
+		filterResetKey++;
 		for (const field of filteredFields) {
 			const defaultValue = defaultFilters[field] ?? [];
 			filterValues[field] = Array.isArray(defaultValue)
@@ -555,15 +864,26 @@
 			}
 			return data;
 		});
-		if (!isStandaloneTable) return;
 		await tick();
 		const next = { ...$tableFilterStates };
 		delete next[filterStoreKey];
 		$tableFilterStates = next;
 	}
 
+	const APPLIED_CONTROL_STATUS_PRESETS: Record<string, string> = {
+		to_do: 'preset-tonal-primary',
+		in_progress: 'preset-tonal-warning',
+		on_hold: 'preset-tonal-secondary',
+		active: 'preset-tonal-success',
+		degraded: 'preset-tonal-error',
+		deprecated: 'preset-tonal-surface'
+	};
+
 	let classesHexBackgroundText = $derived((backgroundHexColor: string) => {
-		return isDark(backgroundHexColor) ? 'text-white' : '';
+		// The badge background is a fixed hex color, so the text must be a fixed color too
+		// (not theme-dependent), otherwise it turns light in dark mode and vanishes on a
+		// light-colored badge. White on dark backgrounds, fixed dark surface otherwise.
+		return isDark(backgroundHexColor) ? 'text-white' : 'text-surface-950';
 	});
 
 	const tail_render = $derived(tail);
@@ -582,10 +902,15 @@
 		'user_groups'
 	];
 
+	// Computed in Python from related rows, so there is no column for the backend to
+	// ORDER BY: DRF drops the term and the click does nothing. Better not to offer it.
+	const UNSORTABLE_COMPUTED_COLUMNS = ['completion', 'review_progress', 'schedule'];
+
 	// Function to check if a column is multi-value and should not be sortable
 	const isMultiValueColumn = (key: string): boolean => {
 		return (
 			MULTI_VALUE_COLUMNS.includes(key) ||
+			UNSORTABLE_COMPUTED_COLUMNS.includes(key) ||
 			(tableSource.body.length > 0 && Array.isArray(tableSource.body[0][key]))
 		);
 	};
@@ -624,6 +949,13 @@
 	};
 
 	let openState = $state(false);
+	// Popover.Content renders while closed and every filter widget fetches its
+	// options on mount, so keep them out of the tree until the first open. Kept
+	// once mounted so reopening does not refetch.
+	let filtersMounted = $state(false);
+	$effect(() => {
+		if (openState) filtersMounted = true;
+	});
 
 	// Search state lifted here so it survives BatchActionBar show/hide cycles
 	let searchValue = $state('');
@@ -631,16 +963,27 @@
 	// Batch selection state
 	let selectedIds: Set<string> = $state(new Set());
 
+	const noBatchFieldEdit = $derived(disableBatchEdit ?? disableEdit);
+
 	const currentBatchActions: BatchActionConfig[] = $derived(
 		URLModel && model
-			? getBatchActions(URLModel).filter((a) =>
+			? getBatchActions(URLModel, page.data?.featureflags ?? {}).filter((a) =>
 					a.type === 'delete'
-						? Object.hasOwn(user.permissions, `delete_${model.name}`)
-						: Object.hasOwn(user.permissions, `change_${model.name}`)
+						? !disableDelete && hasPermissionAnywhere(user, `delete_${model.name}`)
+						: !noBatchFieldEdit && hasPermissionAnywhere(user, `change_${model.name}`)
 				)
 			: []
 	);
-	const hasBatchActions = $derived(currentBatchActions.length > 0 && deleteForm !== undefined);
+	// Table-scoped extras are pre-gated by the caller (change on the parent);
+	// only the lock/disable filters apply here — the child-model permission
+	// filter above would ask the wrong question for parent_action entries.
+	const extraActions = $derived(
+		extraBatchActions.filter((a) => (a.type === 'delete' ? !disableDelete : !noBatchFieldEdit))
+	);
+	const allBatchActions = $derived([...currentBatchActions, ...extraActions]);
+	const hasBatchActions = $derived(
+		(currentBatchActions.length > 0 && deleteForm !== undefined) || extraActions.length > 0
+	);
 
 	let selectAllChecked = $derived.by(() => {
 		const pageIds = $rows.filter((r: any) => r.meta?.id).map((r: any) => r.meta.id);
@@ -679,14 +1022,16 @@
 		}
 		previousRowSignature = sig;
 	});
+
+	let tableWrapEl: HTMLElement | undefined = $state();
 </script>
 
-<div class="card table-wrap {classesBase}">
+<div class="card table-wrap {classesBase}" bind:this={tableWrapEl}>
 	<header class="flex items-center justify-between gap-2 px-2 h-16">
 		{#if hasBatchActions && selectedIds.size > 0}
 			<BatchActionBar
 				{selectedIds}
-				actions={currentBatchActions}
+				actions={allBatchActions}
 				{URLModel}
 				{handler}
 				onClearSelection={clearSelection}
@@ -710,47 +1055,56 @@
 					</Popover.Trigger>
 					<Popover.Positioner class="z-50!">
 						<Popover.Content
-							class="card p-2 bg-white max-w-lg shadow-lg space-y-2 border border-surface-200"
+							class="card p-2 bg-surface-50-950 max-w-lg shadow-lg space-y-2 border border-surface-200-800"
 						>
-							<SuperForm {_form} validators={zod(z.object({}))}>
-								{#snippet children({ form })}
-									{#each filteredFields as field}
-										{#if filters[field]?.component}
-											{@const FilterComponent = filters[field].component}
-											<FilterComponent
-												{form}
-												{field}
-												{...filters[field].props}
-												fieldContext="filter"
-												label={safeTranslate(filters[field].props?.label)}
-												onChange={(value) => {
-													const arrayValue = Array.isArray(value) ? value : [value];
-													const sanitizedArrayValue = arrayValue.filter(
-														(v) => v !== null && v !== undefined && v !== ''
-													);
+							{#if filtersMounted}
+								<SuperForm {_form} validators={zod(z.object({}))}>
+									{#snippet children({ form })}
+										{#each filteredFields as field}
+											{#if filters[field]?.component}
+												{@const FilterComponent = filters[field].component}
+												{#key filterResetKey}
+													<FilterComponent
+														{form}
+														{field}
+														{...filters[field].props}
+														fieldContext="filter"
+														label={safeTranslate(filters[field].props?.label)}
+														filterValue={filterValues[field]}
+														onChange={(value) => {
+															const arrayValue = Array.isArray(value) ? value : [value];
+															const sanitizedArrayValue = arrayValue.filter(
+																(v) => v !== null && v !== undefined && v !== ''
+															);
 
-													filterValues[field] = sanitizedArrayValue.map((v) => ({ value: v }));
-												}}
-											/>
+															filterValues[field] = sanitizedArrayValue.map((v) =>
+																typeof v === 'object' && v !== null && 'value' in v
+																	? v
+																	: { value: v }
+															);
+														}}
+													/>
+												{/key}
+											{/if}
+										{/each}
+										{#if filterCount > 0}
+											<div class="flex justify-end pt-1">
+												<button
+													type="button"
+													class="btn preset-tonal-surface text-sm"
+													onclick={() => {
+														resetFilters();
+														openState = false;
+													}}
+												>
+													<i class="fa-solid fa-rotate-left mr-2"></i>
+													{m.resetFilters()}
+												</button>
+											</div>
 										{/if}
-									{/each}
-									{#if filterCount > 0}
-										<div class="flex justify-end pt-1">
-											<button
-												type="button"
-												class="btn preset-tonal-surface text-sm"
-												onclick={() => {
-													resetFilters();
-													openState = false;
-												}}
-											>
-												<i class="fa-solid fa-rotate-left mr-2"></i>
-												{m.resetFilters()}
-											</button>
-										</div>
-									{/if}
-								{/snippet}
-							</SuperForm>
+									{/snippet}
+								</SuperForm>
+							{/if}
 						</Popover.Content>
 					</Popover.Positioner>
 				</Popover>
@@ -761,12 +1115,20 @@
 			{#if pagination && rowsPerPage}
 				<RowsPerPage {handler} />
 			{/if}
+			{#if showColumnSelector}
+				<ColumnSelector
+					columns={allColumns}
+					visible={visibleColumns}
+					onChange={setVisibleColumns}
+					onReset={resetColumns}
+				/>
+			{/if}
 			<div class="flex space-x-2 items-center">
 				{@render optButton?.()}
 				{#if canSelectObject}
 					{@render selectButton?.()}
 				{/if}
-				{#if canCreateObject && !disableCreate}
+				{#if canCreateObject && !disableCreate && !LIBRARY_MANAGED_URL_MODELS.includes(URLModel)}
 					{@render addButton?.()}
 				{/if}
 			</div>
@@ -781,12 +1143,7 @@
 		</div>
 	{/if}
 	<!-- Table -->
-	<table
-		class="table caption-bottom {classesTable}"
-		class:table-interactive={interactive}
-		role="grid"
-		use:tableA11y
-	>
+	<table class="table caption-bottom {classesTable}" class:table-interactive={interactive}>
 		<thead class="table-head {regionHead}">
 			<tr>
 				{#if hasBatchActions}
@@ -799,23 +1156,22 @@
 						}}
 					>
 						<span
-							class="inline-flex items-center justify-center w-9 h-9 rounded-full transition-colors group-hover/check:bg-black/10 dark:group-hover/check:bg-white/10"
+							class="inline-flex items-center justify-center w-9 h-9 rounded-full transition-colors group-hover/check:bg-black/10 dark:group-hover/check:bg-surface-100-900/10"
 						>
 							<input
 								type="checkbox"
 								class="checkbox pointer-events-none"
+								aria-label={m.selectAll()}
 								checked={selectAllChecked}
 								tabindex={-1}
 							/>
 						</span>
 					</th>
 				{/if}
-				{#each Object.entries(tableSource.head) as [key, heading]}
-					{#if fields.length === 0 || fields.includes(key)}
-						<Th {handler} orderBy={isMultiValueColumn(key) ? undefined : key} class={regionHeadCell}
-							>{safeTranslate(heading)}</Th
-						>
-					{/if}
+				{#each renderColumnKeys as key (key)}
+					<Th {handler} orderBy={isMultiValueColumn(key) ? undefined : key} class={regionHeadCell}
+						>{safeTranslate(tableSource.head[key])}</Th
+					>
 				{/each}
 				{#if displayActions}
 					<th class="{regionHeadCell} select-none text-end"></th>
@@ -826,7 +1182,7 @@
 					{#if hasBatchActions}
 						<th></th>
 					{/if}
-					{#each Object.entries(tableSource.head) as [key, _]}
+					{#each renderColumnKeys as key (key)}
 						{#if thFilterFields.includes(key)}
 							<ThFilter {handler} filterBy={key} />
 						{:else}
@@ -844,206 +1200,247 @@
 							{@const meta = row?.meta ?? row}
 							<tr
 								onclick={(e) => onRowClick(e, rowIndex)}
-								onkeydown={(e) => onRowKeydown(e, rowIndex)}
 								oncontextmenu={() => (contextMenuOpenRow = row)}
-								aria-rowindex={rowIndex + 1}
-								class="hover:preset-tonal-primary even:bg-surface-50 cursor-pointer"
+								class="hover:bg-surface-200-800 even:bg-surface-100-900 cursor-pointer {rowEmphasisClass(
+									row
+								)}"
 							>
 								{#if hasBatchActions}
 									<td
 										class="group/check w-10 text-center cursor-pointer"
-										role="gridcell"
 										onclick={(e) => {
 											e.stopPropagation();
 											if (meta?.id) toggleRowSelection(meta.id);
 										}}
 									>
 										<span
-											class="inline-flex items-center justify-center w-9 h-9 rounded-full transition-colors group-hover/check:bg-black/10 dark:group-hover/check:bg-white/10"
+											class="inline-flex items-center justify-center w-9 h-9 rounded-full transition-colors group-hover/check:bg-black/10 dark:group-hover/check:bg-surface-100-900/10"
 										>
 											<input
 												type="checkbox"
 												class="checkbox pointer-events-none"
+												aria-label={m.selectRow()}
 												checked={selectedIds.has(meta?.id)}
 												tabindex={-1}
 											/>
 										</span>
 									</td>
 								{/if}
-								{#each Object.entries(row) as [key, value]}
-									{#if key !== 'meta'}
-										{@const component = fieldComponentMap[key]}
-										<td role="gridcell">
-											<div class={regionCell}>
-												{#if component && browser}
-													{@const CellComponent = component}
-													{#if CellComponent === LecChartPreview}
-														{#key `${meta?.id || rowIndex}-${key}`}
-															<CellComponent {meta} cell={value} />
-														{/key}
-													{:else}
+								{#each renderColumnKeys as key (key)}
+									{@const value = row[key]}
+									{@const component = fieldComponentMap[key]}
+									<td>
+										<div class={regionCell}>
+											{#if component && browser}
+												{@const CellComponent = component}
+												{#if CellComponent === LecChartPreview}
+													{#key `${meta?.id || rowIndex}-${key}`}
 														<CellComponent {meta} cell={value} />
-													{/if}
+													{/key}
 												{:else}
-													<div
-														data-testid="model-table-td-array-elem"
-														class="base-font-family whitespace-pre-line break-words"
-													>
-														{#if Array.isArray(value)}
-															{@const hiddenCount = isRelatedField(key) ? countMasked(value) : 0}
-															{@const visibleValues = isRelatedField(key)
-																? value.filter((item) => !isMaskedPlaceholder(item))
-																: value}
-															{#if visibleValues.length > 0}
-																<ul class="list-disc pl-4 whitespace-normal">
-																	{#each [...visibleValues].sort((a, b) => {
-																		if ((!a.str && typeof a === 'object') || (!b.str && typeof b === 'object')) return 0;
-																		return safeTranslate(a.str || a).localeCompare(safeTranslate(b.str || b));
-																	}) as val}
-																		<li>
-																			{#if key === 'linked_models' && typeof val === 'string'}
-																				{safeTranslate(convertLinkedModelName(val))}
-																			{:else if key === 'security_objectives' || key === 'security_capabilities'}
-																				{@const [securityObjectiveName, securityObjectiveValue] =
-																					Object.entries(val)[0]}
-																				{safeTranslate(securityObjectiveName).toUpperCase()}: {securityObjectiveValue}
-																			{:else if val.str && val.id && key !== 'qualifications' && key !== 'relationship' && key !== 'nature'}
-																				{@const itemHref = `/${model?.foreignKeyFields?.find((item) => item.field === key)?.urlModel || key.replace(/_/g, '-')}/${val.id}`}
+													<CellComponent {meta} cell={value} />
+												{/if}
+											{:else}
+												<div
+													data-testid="model-table-td-array-elem"
+													class="font-typo-base whitespace-pre-line break-words"
+												>
+													{#if Array.isArray(value)}
+														{@const hiddenCount = isRelatedField(key) ? countMasked(value) : 0}
+														{@const visibleValues = isRelatedField(key)
+															? value.filter((item) => !isMaskedPlaceholder(item))
+															: value}
+														{#if visibleValues.length > 0}
+															<ul class="list-disc pl-4 whitespace-normal">
+																{#each [...visibleValues].sort((a, b) => {
+																	if ((!a.str && typeof a === 'object') || (!b.str && typeof b === 'object')) return 0;
+																	return safeTranslate(a.str || a).localeCompare(safeTranslate(b.str || b));
+																}) as val}
+																	<li>
+																		{#if key === 'linked_models' && typeof val === 'string'}
+																			{safeTranslate(convertLinkedModelName(val))}
+																		{:else if key === 'security_objectives' || key === 'security_capabilities'}
+																			{@const [securityObjectiveName, securityObjectiveValue] =
+																				Object.entries(val)[0]}
+																			{safeTranslate(securityObjectiveName).toUpperCase()}: {securityObjectiveValue}
+																		{:else if val.str && val.id}
+																			{@const itemHref = getRelatedFieldHref(key, val.id, {
+																				fallbackToDashedField: true
+																			})}
+																			{#if key === 'applied_controls' && val.status && val.status !== '--'}
+																				<span
+																					class="badge text-xs {APPLIED_CONTROL_STATUS_PRESETS[
+																						val.status
+																					] ?? 'preset-tonal-surface'}"
+																					>{safeTranslate(val.status)}</span
+																				>
+																			{/if}
+																			{#if itemHref}
 																				<Anchor href={itemHref} class="anchor" stopPropagation
 																					>{safeTranslate(val.str)}</Anchor
 																				>
-																			{:else if val.str}
-																				{safeTranslate(val.str)}
-																			{:else if typeof val === 'string' && val.includes(':') && unsafeTranslate(val.split(':')[0])}
-																				<span class="text"
-																					>{unsafeTranslate(val.split(':')[0] + 'Colon')}
-																					{val.split(':')[1]}</span
-																				>
 																			{:else}
-																				{val ?? '-'}
+																				{safeTranslate(val.str)}
 																			{/if}
-																		</li>
-																	{/each}
-																</ul>
-																{#if hiddenCount > 0}
-																	<p class="mt-1 text-xs text-yellow-700">
-																		{m.objectsNotVisible({ count: hiddenCount })}
-																	</p>
-																{/if}
-															{:else if hiddenCount > 0}
-																<p class="text-xs text-yellow-700">
+																		{:else if val.str}
+																			{safeTranslate(val.str)}
+																		{:else if typeof val === 'string' && val.includes(':') && unsafeTranslate(val.split(':')[0])}
+																			{@const [labelKey, ...valueParts] = val.split(':')}
+																			<span class="text"
+																				>{unsafeTranslate(labelKey + 'Colon') ??
+																					`${unsafeTranslate(labelKey)}:`}
+																				{valueParts.join(':')}</span
+																			>
+																		{:else}
+																			{val ?? '-'}
+																		{/if}
+																	</li>
+																{/each}
+															</ul>
+															{#if hiddenCount > 0}
+																<p class="mt-1 text-xs text-yellow-700">
 																	{m.objectsNotVisible({ count: hiddenCount })}
 																</p>
-															{:else}
-																--
 															{/if}
-														{:else if isMaskedPlaceholder(value)}
-															{#if isRelatedField(key)}
-																<p class="text-xs text-yellow-700">
-																	{m.objectsNotVisible({ count: 1 })}
-																</p>
-															{:else}
-																--
-															{/if}
-														{:else if value && value.str}
-															{#if value.id}
-																{@const itemHref = `/${model?.foreignKeyFields?.find((item) => item.field === key)?.urlModel}/${value.id}`}
-																{#if key === 'ro_to_couple'}
-																	<Anchor
-																		breadcrumbAction="push"
-																		href={itemHref}
-																		class="anchor"
-																		stopPropagation
-																		>{safeTranslate(toCamelCase(value.str.split(' - ')[0]))} - {value.str.split(
-																			'-'
-																		)[1]}</Anchor
-																	>
-																{:else}
-																	<Anchor
-																		breadcrumbAction="push"
-																		href={itemHref}
-																		class="anchor"
-																		stopPropagation>{safeTranslate(value.str)}</Anchor
-																	>
-																{/if}
-															{:else}
-																{safeTranslate(value.str) ?? '-'}
-															{/if}
-														{:else if value && value.hexcolor}
-															<p
-																class="flex w-fit min-w-24 justify-center px-2 py-1 rounded-md ml-2 whitespace-nowrap {classesHexBackgroundText(
-																	value.hexcolor
-																)}"
-																style="background-color: {value.hexcolor}"
-															>
-																{safeTranslate(value.name ?? value.str) ?? '-'}
+														{:else if hiddenCount > 0}
+															<p class="text-xs text-yellow-700">
+																{m.objectsNotVisible({ count: hiddenCount })}
 															</p>
-														{:else if ISO_8601_REGEX.test(value) && (key === 'created_at' || key === 'updated_at' || key === 'start_date' || key === 'expiry_date' || key === 'expiration_date' || key === 'accepted_at' || key === 'rejected_at' || key === 'revoked_at' || key === 'eta' || key === 'due_date' || key === 'timestamp' || key === 'reported_at' || key === 'discovered_on')}
-															{formatDateOrDateTime(value, getLocale())}
-														{:else if [true, false].includes(value)}
-															{@const bd = booleanDisplay(value, key, URLModel)}
-															<span class="ml-4"><i class="{bd.icon} {bd.colorClass}"></i></span>
-														{:else if value === 'YES' || value === 'NO'}
-															{@const bd = booleanDisplay(value === 'YES', key, URLModel)}
-															<span class="ml-4"><i class="{bd.icon} {bd.colorClass}"></i></span>
-														{:else if key === 'progress' || key === 'treatment_progress'}
-															<span class="ml-9"
-																>{value != null
-																	? safeTranslate('percentageDisplay', { number: value })
-																	: '--'}</span
-															>
-														{:else if key === 'translations'}
-															{#if Object.keys(value).length > 0}
-																<div class="flex flex-col gap-2">
-																	{#each Object.entries(value) as [lang, translation]}
-																		<div class="flex flex-row gap-2">
-																			<strong>{lang}:</strong>
-																			<span>{safeTranslate(translation)}</span>
-																		</div>
-																	{/each}
-																</div>
-															{:else}
-																--
-															{/if}
-														{:else if URLModel == 'risk-acceptances' && key === 'name' && row.meta?.accepted_at && row.meta?.revoked_at == null}
-															<div class="flex items-center space-x-2">
-																<span>{safeTranslate(value ?? '-')}</span>
-																<span
-																	class="bg-green-100 text-green-800 text-xs font-semibold mr-2 px-2.5 py-0.5 rounded-sm dark:bg-green-200 dark:text-green-900"
-																>
-																	{m.accept()}
-																</span>
-															</div>
-														{:else if (key === 'name' || key === 'str') && row.meta?.is_locked}
-															<div class="flex items-center space-x-2">
-																<i class="fa-solid fa-lock text-yellow-600" title={m.isLocked()}
-																></i>
-																<span class="text-yellow-600">{safeTranslate(value ?? '-')}</span>
-															</div>
-														{:else if key === 'icon_fa_class'}
-															<i class="text-lg fa {value}"></i>
-														{:else if value && value.name}
-															{value.name}
 														{:else}
-															<!-- NOTE: We will have to handle the ellipses for RTL languages-->
-															{@const displayValue = ['name', 'description', 'ref_id'].includes(key)
-																? (value ?? '-')
-																: safeTranslate(value ?? '-')}
-															{#if displayValue?.length > 300}
-																{displayValue.slice(0, 300)}...
-															{:else}
-																{displayValue}
-															{/if}
+															--
 														{/if}
-														{@render badge?.(key, row)}
-													</div>
-												{/if}
-											</div>
-										</td>
-									{/if}
+													{:else if isMaskedPlaceholder(value)}
+														{#if isRelatedField(key)}
+															<p class="text-xs text-yellow-700">
+																{m.objectsNotVisible({ count: 1 })}
+															</p>
+														{:else}
+															--
+														{/if}
+													{:else if value && value.str}
+														{@const itemHref = value.id
+															? getRelatedFieldHref(key, value.id)
+															: undefined}
+														{#if itemHref}
+															{#if key === 'ro_to_couple'}
+																<Anchor
+																	breadcrumbAction="push"
+																	href={itemHref}
+																	class="anchor"
+																	stopPropagation
+																	>{safeTranslate(toCamelCase(value.str.split(' - ')[0]))} - {value.str.split(
+																		'-'
+																	)[1]}</Anchor
+																>
+															{:else}
+																<Anchor
+																	breadcrumbAction="push"
+																	href={itemHref}
+																	class="anchor"
+																	stopPropagation>{safeTranslate(value.str)}</Anchor
+																>
+															{/if}
+														{:else}
+															{safeTranslate(value.str) ?? '-'}
+														{/if}
+													{:else if value && value.hexcolor}
+														<p
+															class="flex w-fit min-w-24 justify-center px-2 py-1 rounded-md ml-2 whitespace-nowrap {classesHexBackgroundText(
+																value.hexcolor
+															)}"
+															style="background-color: {value.hexcolor}"
+														>
+															{safeTranslate(value.name ?? value.str) ?? '-'}
+														</p>
+													{:else if ISO_8601_REGEX.test(value) && DATE_FIELDS_TO_FORMAT.includes(key)}
+														{formatDateOrDateTime(value, getLocale())}
+													{:else if [true, false].includes(value)}
+														{@const bd = booleanDisplay(value, key, URLModel)}
+														<span class="ml-4"><i class="{bd.icon} {bd.colorClass}"></i></span>
+													{:else if value === 'YES' || value === 'NO'}
+														{@const bd = booleanDisplay(value === 'YES', key, URLModel)}
+														<span class="ml-4"><i class="{bd.icon} {bd.colorClass}"></i></span>
+													{:else if key === 'progress' || key === 'treatment_progress' || key === 'progress_field' || key === 'completion' || key === 'review_progress'}
+														<span class="ml-9"
+															>{value != null
+																? safeTranslate('percentageDisplay', { number: value })
+																: '--'}</span
+														>
+													{:else if key === 'last_assessment_status'}
+														<!-- The status is nullable: only a missing round is "never assessed". -->
+														{#if !meta?.last_assessment_date}
+															<span class="text-surface-500">{m.neverAssessed()}</span>
+														{:else}
+															{safeTranslate(value ?? '-')}
+														{/if}
+													{:else if key === 'translations'}
+														{#if Object.keys(value).length > 0}
+															<div class="flex flex-col gap-2">
+																{#each Object.entries(value) as [lang, translation]}
+																	<div class="flex flex-row gap-2">
+																		<strong>{lang}:</strong>
+																		<span
+																			>{safeTranslate(
+																				typeof translation === 'object' && translation !== null
+																					? ((translation as Record<string, string>).name ?? '')
+																					: translation
+																			)}</span
+																		>
+																	</div>
+																{/each}
+															</div>
+														{:else}
+															--
+														{/if}
+													{:else if URLModel == 'risk-acceptances' && key === 'name' && row.meta?.state}
+														<div class="flex items-center space-x-2">
+															<span>{safeTranslate(value ?? '-')}</span>
+															<span
+																class="badge text-xs"
+																class:preset-tonal-success={row.meta.state === 'Accepted'}
+																class:preset-tonal-error={row.meta.state === 'Rejected' ||
+																	row.meta.state === 'Revoked'}
+																class:preset-tonal-primary={row.meta.state === 'Submitted'}
+																class:preset-tonal-secondary={row.meta.state === 'Created'}
+															>
+																{row.meta.state === 'Created'
+																	? m.draft()
+																	: safeTranslate(row.meta.state)}
+															</span>
+														</div>
+													{:else if (key === 'name' || key === 'str') && row.meta?.is_locked}
+														<div class="flex items-center space-x-2">
+															<i class="fa-solid fa-lock text-yellow-600" title={m.isLocked()}></i>
+															<span class="text-yellow-600">{safeTranslate(value ?? '-')}</span>
+														</div>
+													{:else if key === 'icon_fa_class'}
+														<i class="text-lg fa {value}"></i>
+													{:else if value && value.name}
+														{value.name}
+													{:else}
+														<!-- NOTE: We will have to handle the ellipses for RTL languages-->
+														{@const displayValue = [
+															'name',
+															'description',
+															'ref_id',
+															'key'
+														].includes(key)
+															? (value ?? '-')
+															: safeTranslate(value ?? '-')}
+														{#if displayValue?.length > 300}
+															{displayValue.slice(0, 300)}...
+														{:else}
+															{displayValue}
+														{/if}
+													{/if}
+													{@render badge?.(key, row)}
+												</div>
+											{/if}
+										</div>
+									</td>
 								{/each}
 								{#if displayActions}
-									<td class="text-end {regionCell}" role="gridcell">
+									<td class="text-end {regionCell}">
 										{#if actions}{@render actions({
 												meta: row.meta
 											})}{:else if row.meta[identifierField]}
@@ -1054,8 +1451,7 @@
 												URLModel={actionsURLModel}
 												detailURL={`/${actionsURLModel}/${row.meta[identifierField]}${detailQueryParameter}`}
 												editURL={!(row.meta.builtin || row.meta.urn) ||
-												URLModel === 'terminologies' ||
-												URLModel === 'entities'
+												BUILTIN_EDITABLE_URL_MODELS.includes(URLModel)
 													? `/${actionsURLModel}/${row.meta[identifierField]}/edit?next=${encodeURIComponent(page.url.pathname + page.url.search)}`
 													: undefined}
 												{row}
@@ -1088,22 +1484,44 @@
 								{/if}
 							</tr>
 						{/each}
+						{#if (loading || isFetching) && $rows.length === 0}
+							{#each Array(5) as _}
+								<tr class="even:bg-surface-100-900" data-testid="row-skeleton">
+									{#if hasBatchActions}
+										<td class="w-10"></td>
+									{/if}
+									{#each renderColumnKeys as key (key)}
+										<td>
+											<div class={regionCell}>
+												<div class="space-y-2 py-2 animate-pulse">
+													<div class="h-4 rounded bg-surface-200-800"></div>
+													<div class="h-4 w-3/5 rounded bg-surface-200-800"></div>
+												</div>
+											</div>
+										</td>
+									{/each}
+									{#if displayActions}
+										<td class="text-end {regionCell}"></td>
+									{/if}
+								</tr>
+							{/each}
+						{/if}
 					</tbody>
 				{/snippet}
 			</ContextMenu.Trigger>
-			{#if contextMenuDisplayEdit || contextMenuDisplayDelete || Object.hasOwn(contextMenuActions, URLModel)}
+			{#if contextMenuDisplayEdit || contextMenuDisplayView || contextMenuDisplayDelete || Object.hasOwn(contextMenuActions, URLModel)}
 				<ContextMenu.Content
-					class="z-50 min-w-[180px] outline-hidden bg-white px-1 py-1.5 shadow-md border border-surface-200 rounded-md"
+					class="z-50 min-w-[180px] outline-hidden bg-surface-50-950 px-1 py-1.5 shadow-md border border-surface-200-800 rounded-md"
 				>
 					{#if Object.hasOwn(contextMenuActions, URLModel)}
 						{#each contextMenuActions[URLModel] as action}
 							<action.component row={contextMenuOpenRow} {handler} {URLModel} {action} />
 						{/each}
-						<ContextMenu.Separator class="-mx-1 my-1 block h-px bg-surface-100" />
+						<ContextMenu.Separator class="-mx-1 my-1 block h-px bg-surface-100-900" />
 					{/if}
-					{#if !(contextMenuOpenRow?.meta.builtin || contextMenuOpenRow?.meta.urn) || URLModel === 'terminologies' || URLModel === 'entities'}
+					{#if contextMenuDisplayEdit}
 						<ContextMenu.Item
-							class="flex h-10 w-full select-none items-center rounded-xs py-3 pl-3 pr-1.5 text-sm font-medium cursor-pointer data-highlighted:bg-surface-50"
+							class="flex h-10 w-full select-none items-center rounded-xs py-3 pl-3 pr-1.5 text-sm font-medium cursor-pointer data-highlighted:bg-surface-100-900"
 							onclick={() => {
 								goto(
 									`/${actionsURLModel}/${contextMenuOpenRow?.meta[identifierField]}/edit?next=${encodeURIComponent(page.url.pathname + page.url.search)}`,
@@ -1115,8 +1533,10 @@
 						>
 							{m.edit()}
 						</ContextMenu.Item>
+					{/if}
+					{#if contextMenuDisplayView}
 						<ContextMenu.Item
-							class="flex h-10 w-full select-none items-center rounded-xs py-3 pl-3 pr-1.5 text-sm font-medium cursor-pointer data-highlighted:bg-surface-50"
+							class="flex h-10 w-full select-none items-center rounded-xs py-3 pl-3 pr-1.5 text-sm font-medium cursor-pointer data-highlighted:bg-surface-100-900"
 							onclick={() => {
 								goto(`/${actionsURLModel}/${contextMenuOpenRow?.meta[identifierField]}/`, {
 									breadcrumbAction: 'push'
@@ -1127,9 +1547,9 @@
 						</ContextMenu.Item>
 					{/if}
 					{#if contextMenuDisplayDelete}
-						<ContextMenu.Separator class="-mx-1 my-1 block h-px bg-surface-100" />
+						<ContextMenu.Separator class="-mx-1 my-1 block h-px bg-surface-100-900" />
 						<ContextMenu.Item
-							class="flex h-10 w-full select-none items-center rounded-xs py-3 pl-3 pr-1.5 text-sm font-medium cursor-pointer text-red-500 data-highlighted:bg-surface-50"
+							class="flex h-10 w-full select-none items-center rounded-xs py-3 pl-3 pr-1.5 text-sm font-medium cursor-pointer text-red-500 data-highlighted:bg-surface-100-900"
 							onclick={() => {
 								if (URLModel === 'folders') {
 									contextMenuPromptModalConfirmDelete(
@@ -1166,7 +1586,7 @@
 			<RowCount {handler} />
 		{/if}
 		{#if pagination}
-			<Pagination {handler} {URLModel} />
+			<Pagination {handler} {URLModel} scrollTarget={tableWrapEl} />
 		{/if}
 	</footer>
 </div>

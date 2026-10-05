@@ -2,12 +2,11 @@
 	import type { SuperForm } from 'sveltekit-superforms';
 	import type { ModelInfo, CacheLock } from '$lib/utils/types';
 	import AutocompleteSelect from '$lib/components/Forms/AutocompleteSelect.svelte';
-	import FolderTreeSelect from '$lib/components/Forms/FolderTreeSelect.svelte';
 	import { m } from '$paraglide/messages';
-	import TextArea from '../TextArea.svelte';
+	import MarkdownField from '$lib/components/Forms/MarkdownField.svelte';
 	import Checkbox from '../Checkbox.svelte';
 	import RadioGroup from '../RadioGroup.svelte';
-	import { type ModalComponent, type ModalSettings } from '@skeletonlabs/skeleton-svelte';
+	import { type ModalComponent, type ModalSettings } from '$lib/components/Modals/stores';
 	import CreateModal from '$lib/components/Modals/CreateModal.svelte';
 	import { page } from '$app/state';
 	import { safeTranslate } from '$lib/utils/i18n';
@@ -54,7 +53,7 @@
 		// modalStore.trigger(modal);
 	}
 
-	const activityBackground = context === 'edit' ? 'bg-white' : 'bg-surface-100-900';
+	const activityBackground = context === 'edit' ? 'bg-surface-50-950' : 'bg-surface-100-900';
 	const activeActivity: string = page.url.searchParams.get('activity') || '';
 
 	const getCriticality = (
@@ -104,23 +103,15 @@
 	});
 </script>
 
-<FolderTreeSelect
-	{form}
-	field="folder"
-	cacheLock={cacheLocks['folder']}
-	bind:cachedValue={formDataCache['folder']}
-	label={m.folder()}
-	hidden
-/>
 <div
 	class="relative p-2 space-y-2 rounded-container {activeActivity === 'one'
 		? 'border-2 border-primary-500'
-		: 'border-2 border-gray-300 border-dashed'}"
+		: 'border-2 border-surface-300-700 border-dashed'}"
 >
 	<p
 		class="absolute -top-3 {activityBackground} font-bold {activeActivity === 'one'
 			? 'text-primary-500'
-			: 'text-gray-500'}"
+			: 'text-surface-600-400'}"
 	>
 		{m.activityOne()}
 	</p>
@@ -130,6 +121,7 @@
 				<AutocompleteSelect
 					{form}
 					optionsEndpoint="entities"
+					optionsExtraFields={[['folder', 'str']]}
 					field="entity"
 					cacheLock={cacheLocks['entity']}
 					bind:cachedValue={formDataCache['entity']}
@@ -265,7 +257,7 @@
 				label={m.selected()}
 				helpText={m.stakeholderIsSelectedHelpText()}
 			/>
-			<TextArea
+			<MarkdownField
 				{form}
 				field="justification"
 				label={m.justification()}
@@ -280,12 +272,12 @@
 	<div
 		class="relative p-2 space-y-2 rounded-container {activeActivity === 'three'
 			? 'border-2 border-primary-500'
-			: 'border-2 border-gray-300 border-dashed'}"
+			: 'border-2 border-surface-300-700 border-dashed'}"
 	>
 		<p
 			class="absolute -top-3 {activityBackground} font-bold {activeActivity === 'three'
 				? 'text-primary-500'
-				: 'text-gray-500'}"
+				: 'text-surface-600-400'}"
 		>
 			{m.activityThree()}
 		</p>
@@ -296,6 +288,10 @@
 					{form}
 					optionsEndpoint="applied-controls"
 					optionsExtraFields={[['folder', 'str']]}
+					optionsInfoFields={{
+						fields: [{ field: 'category', translate: true }],
+						position: 'prefix'
+					}}
 					field="applied_controls"
 					label={m.appliedControls()}
 				/>

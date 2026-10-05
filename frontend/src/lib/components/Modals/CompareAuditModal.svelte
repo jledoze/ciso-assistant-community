@@ -20,7 +20,8 @@
 
 	let { parent, currentAudit }: Props = $props();
 
-	const cBase = 'card bg-surface-50 p-4 w-fit max-w-2xl shadow-xl space-y-4';
+	const cBase =
+		'card bg-surface-100-900 border border-surface-500 p-4 w-fit max-w-2xl shadow-xl space-y-4';
 	const cHeader = 'text-2xl font-bold';
 
 	// Create a simple form schema for the comparison selection
@@ -56,15 +57,14 @@
 	<div class="modal-compare-audit {cBase}">
 		<div class="flex items-center justify-between">
 			<header class={cHeader}>{m.compareToAudit()}</header>
-			<div
-				role="button"
-				tabindex="0"
+			<button
+				type="button"
+				aria-label={m.close()}
 				class="flex items-center hover:text-primary-500 cursor-pointer"
 				onclick={parent.onClose}
-				onkeydown={parent.onClose}
 			>
 				<i class="fa-solid fa-xmark"></i>
-			</div>
+			</button>
 		</div>
 		<form method="POST" use:enhance class="space-y-4">
 			<AutocompleteSelect
@@ -87,7 +87,11 @@
 				onChange={() => {}}
 			/>
 			<div class="flex justify-end space-x-2">
-				<button type="button" class="btn preset-filled-surface-500" onclick={parent.onClose}>
+				<button
+					type="button"
+					class="btn preset-tonal-surface border border-surface-500"
+					onclick={parent.onClose}
+				>
 					{m.cancel()}
 				</button>
 				<button

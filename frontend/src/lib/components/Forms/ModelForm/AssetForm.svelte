@@ -10,8 +10,10 @@
 	import { m } from '$paraglide/messages';
 	import { onMount } from 'svelte';
 	import type { SuperValidated } from 'sveltekit-superforms';
+	import { formFieldProxy } from 'sveltekit-superforms';
 	import AutocompleteSelect from '../AutocompleteSelect.svelte';
-	import FolderTreeSelect from '../FolderTreeSelect.svelte';
+	import AssetClassTreeSelect from '../TreeSelect/AssetClassTreeSelect.svelte';
+	import CustomFieldsSection from '../CustomFieldsSection.svelte';
 	import Duration from '../Duration.svelte';
 	import RadioGroup from '../RadioGroup.svelte';
 	import Select from '../Select.svelte';
@@ -37,7 +39,11 @@
 		data = {}
 	}: Props = $props();
 
-	type SecurityObjectiveScale = '0-3' | '1-4' | 'FIPS-199';
+	let doraEnabled = $derived(!!page.data?.featureflags?.dora);
+
+	const { value: folderId } = formFieldProxy(form, 'folder');
+
+	type SecurityObjectiveScale = keyof typeof SECURITY_OBJECTIVE_SCALE_MAP;
 	const scale: SecurityObjectiveScale = page.data.settings.security_objective_scale;
 	const securityObjectiveScaleMap = SECURITY_OBJECTIVE_SCALE_MAP[scale];
 	const reducedSecurityObjectiveMap = securityObjectiveScaleMap.filter(
@@ -98,23 +104,14 @@
 	});
 </script>
 
-<AutocompleteSelect
+<AssetClassTreeSelect
 	{form}
-	optionsEndpoint="asset-class"
-	optionsLabelField="full_path"
 	field="asset_class"
 	cacheLock={cacheLocks['asset_class']}
 	bind:cachedValue={formDataCache['asset_class']}
 	label={m.assetClass()}
+	fallbackLabel={object?.asset_class?.str ?? object?.asset_class?.name ?? null}
 />
-<TextField
-	{form}
-	field="ref_id"
-	cacheLock={cacheLocks['ref_id']}
-	bind:cachedValue={formDataCache['ref_id']}
-	label={m.refId()}
-/>
-
 <AutocompleteSelect
 	{form}
 	multiple
@@ -128,13 +125,6 @@
 	cacheLock={cacheLocks['owner']}
 	bind:cachedValue={formDataCache['owner']}
 	label={m.owner()}
-/>
-<FolderTreeSelect
-	{form}
-	field="folder"
-	cacheLock={cacheLocks['folder']}
-	bind:cachedValue={formDataCache['folder']}
-	label={m.domain()}
 />
 <Select
 	{form}
@@ -190,58 +180,61 @@
 	helpText={m.supportingAssetsHelpText()}
 />
 {#if typeConfig}
-	<Dropdown
-		open={false}
-		style="hover:text-primary-700"
-		icon="fa-solid fa-shield-halved"
-		header={typeConfig.securityLabel}
-	>
-		<div class="flex flex-col space-y-4">
-			{#each securityObjectives as objective}
-				<span class="flex flex-row items-end space-x-4">
-					<Checkbox
+	<!-- Remount the inputs when the asset type changes -->
+	{#key data.type}
+		<Dropdown
+			open={false}
+			style="hover:text-primary-700"
+			icon="fa-solid fa-shield-halved"
+			header={typeConfig.securityLabel}
+		>
+			<div class="flex flex-col space-y-4">
+				{#each securityObjectives as objective}
+					<span class="flex flex-row items-end space-x-4">
+						<Checkbox
+							{form}
+							field={objective}
+							label={''}
+							valuePath="{typeConfig.securityKey}.objectives.{objective}.is_enabled"
+							checkboxComponent="switch"
+							class="h-full flex flex-row items-center justify-center my-1"
+							classesContainer="h-full"
+						/>
+						<RadioGroup
+							possibleOptions={securityObjectiveOptions}
+							{form}
+							label={safeTranslate(objective)}
+							labelKey="label"
+							key="value"
+							field={objective}
+							valuePath="{typeConfig.securityKey}.objectives.{objective}.value"
+							disabled={data[typeConfig.securityKey]?.objectives?.[objective]?.is_enabled === false}
+						/>
+					</span>
+				{/each}
+			</div>
+		</Dropdown>
+		<Dropdown
+			open={false}
+			style="hover:text-indigo-700"
+			icon="fa-regular fa-clock"
+			header={typeConfig.recoveryLabel}
+		>
+			<div class="flex flex-col space-y-4">
+				{#each disasterRecoveryObjectives as objective}
+					<Duration
 						{form}
 						field={objective}
-						label={''}
-						valuePath="{typeConfig.securityKey}.objectives.{objective}.is_enabled"
-						checkboxComponent="switch"
-						class="h-full flex flex-row items-center justify-center my-1"
-						classesContainer="h-full"
-					/>
-					<RadioGroup
-						possibleOptions={securityObjectiveOptions}
-						{form}
 						label={safeTranslate(objective)}
-						labelKey="label"
-						key="value"
-						field={objective}
-						valuePath="{typeConfig.securityKey}.objectives.{objective}.value"
-						disabled={data[typeConfig.securityKey]?.objectives?.[objective]?.is_enabled === false}
+						helpText={Object.hasOwn(m, `${objective}HelpText`) ? m[`${objective}HelpText`]() : ''}
+						valuePath="{typeConfig.recoveryKey}.objectives.{objective}.value"
 					/>
-				</span>
-			{/each}
-		</div>
-	</Dropdown>
-	<Dropdown
-		open={false}
-		style="hover:text-indigo-700"
-		icon="fa-regular fa-clock"
-		header={typeConfig.recoveryLabel}
-	>
-		<div class="flex flex-col space-y-4">
-			{#each disasterRecoveryObjectives as objective}
-				<Duration
-					{form}
-					field={objective}
-					label={safeTranslate(objective)}
-					helpText={Object.hasOwn(m, `${objective}HelpText`) ? m[`${objective}HelpText`]() : ''}
-					valuePath="{typeConfig.recoveryKey}.objectives.{objective}.value"
-				/>
-			{/each}
-		</div>
-	</Dropdown>
+				{/each}
+			</div>
+		</Dropdown>
+	{/key}
 {/if}
-{#if data.type === 'PR'}
+{#if data.type === 'PR' && doraEnabled}
 	<Dropdown
 		open={false}
 		style="hover:text-purple-700"
@@ -304,6 +297,10 @@
 		multiple
 		optionsEndpoint="applied-controls"
 		optionsLabelField="auto"
+		optionsInfoFields={{
+			fields: [{ field: 'category', translate: true }],
+			position: 'prefix'
+		}}
 		field="applied_controls"
 		cacheLock={cacheLocks['applied_controls']}
 		bind:cachedValue={formDataCache['applied_controls']}
@@ -376,3 +373,5 @@
 		hidden
 	/>
 {/if}
+
+<CustomFieldsSection {form} model="core.asset" folderId={$folderId} />

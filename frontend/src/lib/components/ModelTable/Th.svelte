@@ -19,6 +19,7 @@
 	_class += rest.class;
 
 	const identifier = orderBy?.toString();
+	const sortable = Boolean(orderBy);
 
 	const sort = handler.getSort();
 	const update = () => {
@@ -30,9 +31,8 @@
 </script>
 
 <th
-	onclick={update}
 	class:active={isActive}
-	class="{_class} hover:text-black"
+	class="{_class} hover:text-surface-950-50"
 	data-testid="tableheader"
 	role="columnheader"
 	aria-sort={$sort?.orderBy === identifier
@@ -41,10 +41,10 @@
 			: 'descending'
 		: 'none'}
 >
-	<div class="flex items-center h-full">
+	{#snippet label()}
 		{@render children?.()}
 		<span
-			class="pl-2 before:border-b-surface-200 before:mt-0.5 after:border-t-surface-200 after:mt-0.5"
+			class="pl-2 before:border-b-surface-200-800 before:mt-0.5 after:border-t-surface-200-800 after:mt-0.5"
 			class:asc={$sort?.direction === 'asc'}
 			class:desc={$sort?.direction === 'desc'}
 			aria-hidden="true"
@@ -55,7 +55,21 @@
 				<i class="fa-solid fa-sort-down"></i>
 			{/if}
 		</span>
-	</div>
+	{/snippet}
+
+	{#if sortable}
+		<button
+			type="button"
+			onclick={update}
+			class="flex items-center h-full w-full cursor-pointer text-left"
+		>
+			{@render label()}
+		</button>
+	{:else}
+		<div class="flex items-center h-full">
+			{@render label()}
+		</div>
+	{/if}
 </th>
 
 <style>

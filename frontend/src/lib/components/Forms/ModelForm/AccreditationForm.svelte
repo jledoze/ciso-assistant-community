@@ -1,8 +1,7 @@
 <script lang="ts">
 	import AutocompleteSelect from '../AutocompleteSelect.svelte';
-	import FolderTreeSelect from '../FolderTreeSelect.svelte';
 	import TextField from '../TextField.svelte';
-	import TextArea from '../TextArea.svelte';
+	import MarkdownField from '$lib/components/Forms/MarkdownField.svelte';
 	import Select from '../Select.svelte';
 	import Dropdown from '$lib/components/Dropdown/Dropdown.svelte';
 	import type { CacheLock, ModelInfo } from '$lib/utils/types';
@@ -27,22 +26,6 @@
 		object = {}
 	}: Props = $props();
 </script>
-
-<TextField
-	{form}
-	field="ref_id"
-	cacheLock={cacheLocks['ref_id']}
-	bind:cachedValue={formDataCache['ref_id']}
-	label={m.refId()}
-/>
-
-<FolderTreeSelect
-	{form}
-	field="folder"
-	cacheLock={cacheLocks['folder']}
-	bind:cachedValue={formDataCache['folder']}
-	label={m.domain()}
-/>
 
 <AutocompleteSelect
 	{form}
@@ -131,6 +114,7 @@
 	/>
 	<TextField
 		type="number"
+		step="1"
 		{form}
 		field="duration_months"
 		cacheLock={cacheLocks['duration_months']}
@@ -169,7 +153,7 @@
 		translateOptions={false}
 		allowUserOptions="append"
 	/>
-	<TextArea
+	<MarkdownField
 		{form}
 		field="observation"
 		label={m.observation()}

@@ -9,6 +9,7 @@ export interface LoadTableDataParams {
 	endpoint: string;
 	fields?: { head: string[]; body: string[] };
 	featureFlags?: Record<string, boolean>;
+	onError?: (error: unknown) => void;
 }
 
 export const loadTableData = async ({
@@ -16,7 +17,8 @@ export const loadTableData = async ({
 	URLModel,
 	endpoint,
 	fields,
-	featureFlags = {}
+	featureFlags = {},
+	onError
 }: LoadTableDataParams) => {
 	const url = new URL(endpoint, window.location.origin);
 	const params = new URLSearchParams(url.search);
@@ -25,10 +27,19 @@ export const loadTableData = async ({
 	newParams.forEach((value, key) => params.append(key, value));
 	url.search = params.toString();
 
-	const response = await fetch(url.toString()).then((res) => res.json());
+	let response;
+	try {
+		const res = await fetch(url.toString());
+		if (!res.ok) throw new Error(`Failed to load ${URLModel}: ${res.status}`);
+		response = await res.json();
+	} catch (error) {
+		state.setTotalRows(0);
+		onError?.(error);
+		return [];
+	}
 	state.setTotalRows(response.count);
 
-	const baseFields = getListViewFields({ key: URLModel, featureFlags });
+	const baseFields = getListViewFields({ key: URLModel, featureFlags, includeOptional: true });
 
 	const fieldsToUse =
 		fields?.head && fields.head.length > 0 && fields.head.toString() !== baseFields.head.toString()
@@ -39,7 +50,17 @@ export const loadTableData = async ({
 				}
 			: baseFields;
 
-	const bodyData = tableSourceMapper(response.results, fieldsToUse.body);
+	// Flatten custom field values to top-level `cf__<key>` so they map to opt-in columns.
+	const results = (response.results ?? []).map((row: Record<string, any>) => {
+		if (row.custom_fields && typeof row.custom_fields === 'object') {
+			const flat: Record<string, any> = {};
+			for (const [k, v] of Object.entries(row.custom_fields)) flat[`cf__${k}`] = v;
+			return { ...row, ...flat };
+		}
+		return row;
+	});
+
+	const bodyData = tableSourceMapper(results, fieldsToUse.body);
 
 	const headData: Record<string, string> = fieldsToUse.body.reduce((obj, key, index) => {
 		obj[key] = fieldsToUse.head[index];
@@ -57,10 +78,12 @@ export const loadTableData = async ({
 	});
 };
 
-const getParams = ({ offset, rowsPerPage, search, sort, filters }: State) => {
+export const getParams = ({ offset, rowsPerPage, search, sort, filters }: State) => {
 	const params = new URLSearchParams();
 	params.set('offset', offset.toString() ?? '0');
-	params.set('limit', rowsPerPage.toString() ?? '10');
+	// rowsPerPage is 0 when a table opts out of pagination, and the backend rejects
+	// limit=0; leaving it unset falls back to the server default page size.
+	if (rowsPerPage) params.set('limit', rowsPerPage.toString());
 	if (search) {
 		params.set('search', search);
 	}

@@ -25,15 +25,17 @@ from django.http import Http404, HttpRequest, HttpResponseRedirect
 from urllib.parse import urlparse
 
 from iam.sso.errors import AuthError
+from iam.sso.redirects import get_sso_authenticate_url
+from iam.sso.slo import stash_oidc_slo_state
 from iam.utils import generate_token
 
 logger = structlog.get_logger(__name__)
 
 # State and nonce parameters. allauth's default state is 16 chars and sends no
 # nonce. We generate both from this alphabet at a length that satisfies the
-# OIDC-standard `^[A-Za-z0-9-._~,]{36,128}$` form.
-_OIDC_TOKEN_ALPHABET = string.ascii_letters + string.digits + "-._~,"
-_OIDC_TOKEN_LENGTH = 40
+# `^[A-Za-z0-9-._~]{43,128}$` form (the RFC 7636 PKCE code_verifier grammar).
+_OIDC_TOKEN_ALPHABET = string.ascii_letters + string.digits + "-._~"
+_OIDC_TOKEN_LENGTH = 43
 _OIDC_NONCE_SESSION_PREFIX = "oidc_nonce::"
 # Cap stashed nonces per session so abandoned login attempts can't grow the
 # session bag indefinitely. Mirrors allauth's MAX_STATES (statekit.py).
@@ -42,6 +44,19 @@ _OIDC_NONCE_SESSION_MAX = 10
 
 def _generate_oidc_token(length: int = _OIDC_TOKEN_LENGTH) -> str:
     return "".join(secrets.choice(_OIDC_TOKEN_ALPHABET) for _ in range(length))
+
+
+def _get_oidc_scopes(provider, request: HttpRequest) -> list[str]:
+    """Return allauth's scopes plus optional scopes from the SSO config."""
+    scopes = provider.get_scope_from_request(request)
+    configured_scopes = provider.app.settings.get("additional_scopes") or ""
+    additional_scopes = [
+        scope.strip() for scope in configured_scopes.split(",") if scope.strip()
+    ]
+    for additional_scope in additional_scopes:
+        if additional_scope and additional_scope not in scopes:
+            scopes.append(additional_scope)
+    return scopes
 
 
 class NonceValidatingOpenIDConnectAdapter(OpenIDConnectOAuth2Adapter):
@@ -88,6 +103,7 @@ class NonceValidatingOpenIDConnectAdapter(OpenIDConnectOAuth2Adapter):
                     provider=self.provider_id,
                 )
             data["id_token"] = decoded
+            stash_oidc_slo_state(request, id_token_str)
         return self.get_provider().sociallogin_from_response(request, data)
 
 
@@ -100,8 +116,8 @@ def oidc_redirect(
     **state_kwargs,
 ) -> HttpResponseRedirect:
     """Builds the authorization redirect mirroring `OAuth2Provider.redirect`,
-    but with a state_id and nonce that match the OIDC-standard regex
-    `^[A-Za-z0-9-._~,]{36,128}$`. The nonce is stashed in the session so the
+    but with a state_id and nonce that match the regex
+    `^[A-Za-z0-9-._~]{43,128}$`. The nonce is stashed in the session so the
     callback adapter can verify it against the id_token claim. Extra
     `state_kwargs` (e.g. `headless=True`) are forwarded to allauth's state
     stash so downstream flow behavior is preserved."""
@@ -119,7 +135,7 @@ def oidc_redirect(
     code_verifier = pkce_params.pop("code_verifier", None)
     auth_params.update(pkce_params)
 
-    scope = provider.get_scope_from_request(request)
+    scope = _get_oidc_scopes(provider, request)
 
     state_id = _generate_oidc_token()
     nonce = _generate_oidc_token()
@@ -220,7 +236,7 @@ def callback(request, provider_id):
             )
 
         token = generate_token(request.user)
-        next = f"{settings.CISO_ASSISTANT_URL.rstrip('/')}/sso/authenticate"
+        next = get_sso_authenticate_url(response.get("Location"))
 
         logger.info(
             "SSO authentication successful",

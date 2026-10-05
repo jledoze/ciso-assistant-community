@@ -5,7 +5,7 @@
 	const modalStore: ModalStore = getModalStore();
 
 	// Base Classes
-	const cBase = 'card bg-surface-50 p-4 w-modal shadow-xl space-y-4';
+	const cBase = 'card bg-surface-100-900 border border-surface-500 p-4 w-modal shadow-xl space-y-4';
 	const cHeader = 'text-2xl font-bold';
 
 	interface Props {
@@ -25,18 +25,18 @@
 		</header>
 		<article class="space-y-3">
 			<p>{m.externalLinkConfirmMessage()}</p>
-			<div class="code-block bg-surface-100 p-3 rounded-lg text-sm break-all">
+			<div class="code-block bg-surface-100-900 p-3 rounded-lg text-sm break-all">
 				{url}
 			</div>
-			<p class="text-sm text-surface-600">
+			<p class="text-sm text-surface-600-400">
 				{m.externalLinkVerifyMessage()}
 			</p>
 		</article>
 		<footer class="modal-footer {parent.regionFooter} flex justify-end space-x-2">
-			<button type="button" class="btn variant-ghost" onclick={parent.onClose}>
+			<button type="button" class="btn preset-outlined" onclick={parent.onClose}>
 				{m.cancel()}
 			</button>
-			<button class="btn variant-filled-primary" type="button" onclick={parent.onConfirm}>
+			<button class="btn preset-filled-primary-500" type="button" onclick={parent.onConfirm}>
 				{m.continue()}
 			</button>
 		</footer>

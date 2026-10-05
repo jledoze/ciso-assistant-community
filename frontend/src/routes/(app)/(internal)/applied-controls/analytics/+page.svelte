@@ -15,11 +15,11 @@
 <div class="p-4 space-y-4">
 	<div class="flex items-center justify-between">
 		<div class="flex items-center gap-3">
-			<Anchor href={`${data.backUrl}${data.filterSearch}`} class="btn variant-ghost-surface">
+			<Anchor href={`${data.backUrl}${data.filterSearch}`} class="btn preset-outlined-surface-500">
 				<i class="fa-solid fa-arrow-left mr-2" aria-hidden="true"></i>
 				{safeTranslate(data.backLabel) || data.backLabel}
 			</Anchor>
-			<h1 class="text-2xl font-bold text-gray-900">{m.appliedControlsAnalytics()}</h1>
+			<h1 class="text-2xl font-bold text-surface-900-100">{m.appliedControlsAnalytics()}</h1>
 		</div>
 		{#if data.hasFilters}
 			<span

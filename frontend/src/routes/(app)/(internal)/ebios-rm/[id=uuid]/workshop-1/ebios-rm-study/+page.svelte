@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ClassificationBadge from '$lib/components/ClassificationBadge.svelte';
 	import type { PageData } from './$types';
 	import { m } from '$paraglide/messages';
 	import { safeTranslate } from '$lib/utils/i18n';
@@ -17,6 +18,8 @@
 	} from '$lib/components/Modals/stores';
 	import MarkdownRenderer from '$lib/components/MarkdownRenderer.svelte';
 	import { countMasked } from '$lib/utils/related-visibility';
+	import { formatDateOrDateTime } from '$lib/utils/datetime';
+	import { getLocale } from '$paraglide/runtime';
 
 	const modalStore: ModalStore = getModalStore();
 
@@ -71,7 +74,8 @@
 				form: data.updateForm,
 				model: data.updatedModel,
 				object: data.object,
-				context: 'selectAsset'
+				context: 'selectAsset',
+				customFolder: true
 			}
 		};
 		let modal: ModalSettings = {
@@ -97,32 +101,18 @@
 	});
 </script>
 
-<div class="card p-4 bg-white shadow-lg">
+<div class="card p-4 bg-surface-50-950 shadow-lg">
 	<div class="flex flex-col space-y-4">
 		<div class="flex flex-row justify-between items-center w-full">
 			<Anchor
 				breadcrumbAction="push"
 				href={`/ebios-rm/${data.data.id}`}
-				class="flex items-center space-x-2 text-primary-800 hover:text-primary-600"
+				class="flex items-center space-x-2 text-primary-800-200 hover:text-primary-600-400"
 			>
 				<i class="fa-solid fa-arrow-left"></i>
 				<p>{m.goBackToEbiosRmStudy()}</p>
 			</Anchor>
 
-			<div class="flex items-center space-x-2">
-				{#if ebiosRmStudy.ref_id}
-					<span class="badge bg-pink-200 text-pink-800 font-medium">
-						{m.refIdSemiColon()}
-						{ebiosRmStudy.ref_id}
-					</span>
-				{/if}
-				<span class="text-2xl font-bold">
-					{ebiosRmStudy.name} - v{ebiosRmStudy.version}
-				</span>
-				<span class="badge text-xs {statusMap[ebiosRmStudy.status]}">
-					{safeTranslate(ebiosRmStudy.status)}
-				</span>
-			</div>
 			{#if canEditObject}
 				<Anchor
 					href={`${page.url.pathname}/edit?activity=${activeActivity}&next=${page.url.pathname}?activity=${activeActivity}`}
@@ -133,51 +123,121 @@
 				</Anchor>
 			{/if}
 		</div>
-		<div class="flex justify-center items-center w-full gap-5">
-			<span class="text-sm text-gray-500"
-				>{m.domainSemiColon()}
-				<Anchor class="anchor" href="/folders/{ebiosRmStudy.folder.id}"
-					>{ebiosRmStudy.folder.str}</Anchor
-				>
-			</span>
-			<span class="text-sm text-gray-500"
-				>{m.referenceEntitySemiColon()}
-				<Anchor class="anchor" href="/entities/{ebiosRmStudy.reference_entity.id}"
-					>{ebiosRmStudy.reference_entity.str}</Anchor
-				>
-			</span>
-			<span class="text-sm text-gray-500"
-				>{m.ebiosRmMatrixHelpText()}
-				<Anchor class="anchor" href="/risk-matrices/{ebiosRmStudy.risk_matrix.id}"
-					>{ebiosRmStudy.risk_matrix.str}</Anchor
-				>
-			</span>
-			<span class="text-sm text-gray-500"
-				>{m.quotationMethodSemiColon()}
-				<span class="font-bold">{safeTranslate(ebiosRmStudy.quotation_method)}</span>
-			</span>
-		</div>
 		<div
 			id="activityOne"
 			class="relative p-4 space-y-4 rounded-md w-full flex flex-col items-center
                 {activeActivity === 'one'
 				? 'border-2 border-primary-500'
-				: 'border-2 border-gray-300 border-dashed'}"
+				: 'border-2 border-surface-300-700 border-dashed'}"
 		>
 			<span
-				class="absolute -top-3 bg-white font-bold {activeActivity === 'one'
+				class="absolute -top-3 bg-surface-50-950 font-bold {activeActivity === 'one'
 					? 'text-primary-500'
-					: 'text-gray-500'}">{m.activityOne()}</span
+					: 'text-surface-600-400'}">{m.activityOne()}</span
 			>
-			{#if ebiosRmStudy.description}
-				<div class="text-gray-600 text-justify w-full">
-					<MarkdownRenderer content={ebiosRmStudy.description} />
+			<div class="w-full p-4 bg-surface-50-950 border rounded-md shadow-xs space-y-4">
+				<h3 class="font-semibold text-lg text-surface-700-300 flex items-center space-x-2">
+					<i class="fa-solid fa-bullseye text-purple-500"></i>
+					<span>{safeTranslate(m.ebiosWs1_1())}</span>
+				</h3>
+				<div class="flex items-center space-x-2">
+					{#if ebiosRmStudy.ref_id}
+						<span class="badge bg-pink-200 text-pink-800 font-medium">
+							{m.refIdSemiColon()}
+							{ebiosRmStudy.ref_id}
+						</span>
+					{/if}
+					<span class="text-2xl font-bold">
+						{ebiosRmStudy.name} - v{ebiosRmStudy.version}
+					</span>
+					<span class="badge text-xs {statusMap[ebiosRmStudy.status]}">
+						{safeTranslate(ebiosRmStudy.status)}
+					</span>
+					<ClassificationBadge classification={ebiosRmStudy.classification} />
 				</div>
-			{:else}
-				<p class="text-gray-600">{m.noDescription()}</p>
-			{/if}
-			<div class="w-full p-4 bg-gray-50 border rounded-md shadow-xs">
-				<h3 class="font-semibold text-lg text-gray-700 flex items-center space-x-2">
+				<div class="flex flex-wrap items-center gap-x-8 gap-y-1">
+					<span class="text-sm text-surface-600-400"
+						>{m.domainSemiColon()}
+						<Anchor class="anchor" href="/folders/{ebiosRmStudy.folder.id}"
+							>{ebiosRmStudy.folder.str}</Anchor
+						>
+					</span>
+					<span class="text-sm text-surface-600-400"
+						>{m.referenceEntitySemiColon()}
+						<Anchor class="anchor" href="/entities/{ebiosRmStudy.reference_entity.id}"
+							>{ebiosRmStudy.reference_entity.str}</Anchor
+						>
+					</span>
+					<span class="text-sm text-surface-600-400"
+						>{m.ebiosRmMatrixHelpText()}
+						<Anchor class="anchor" href="/risk-matrices/{ebiosRmStudy.risk_matrix.id}"
+							>{ebiosRmStudy.risk_matrix.str}</Anchor
+						>
+					</span>
+					<span class="text-sm text-surface-600-400"
+						>{m.quotationMethodSemiColon()}
+						<span class="font-bold">{safeTranslate(ebiosRmStudy.quotation_method_display)}</span>
+					</span>
+				</div>
+				<div>
+					<h4 class="font-semibold text-surface-700-300">{m.description()}</h4>
+					{#if ebiosRmStudy.description}
+						<MarkdownRenderer content={ebiosRmStudy.description} />
+					{:else}
+						<p class="text-surface-500">--</p>
+					{/if}
+				</div>
+				<div class="grid md:grid-cols-2 gap-4">
+					<div>
+						<h4 class="font-semibold text-surface-700-300">{m.objectives()}</h4>
+						{#if ebiosRmStudy.objectives}
+							<MarkdownRenderer content={ebiosRmStudy.objectives} />
+						{:else}
+							<p class="text-surface-500">--</p>
+						{/if}
+					</div>
+					<div>
+						<h4 class="font-semibold text-surface-700-300">{m.constraintsHypotheses()}</h4>
+						{#if ebiosRmStudy.constraints_hypotheses}
+							<MarkdownRenderer content={ebiosRmStudy.constraints_hypotheses} />
+						{:else}
+							<p class="text-surface-500">--</p>
+						{/if}
+					</div>
+				</div>
+				<div class="flex flex-wrap gap-x-8 gap-y-1 text-sm text-surface-600-400">
+					<span
+						>{m.eta()}:
+						<span class="font-bold"
+							>{ebiosRmStudy.eta ? formatDateOrDateTime(ebiosRmStudy.eta, getLocale()) : '--'}</span
+						></span
+					>
+					<span
+						>{m.dueDate()}:
+						<span class="font-bold"
+							>{ebiosRmStudy.due_date
+								? formatDateOrDateTime(ebiosRmStudy.due_date, getLocale())
+								: '--'}</span
+						></span
+					>
+					{#if page.data?.featureflags?.responsibility_matrices || ebiosRmStudy.responsibility_matrix}
+						<span
+							>{m.responsibilityMatrix()}:
+							{#if ebiosRmStudy.responsibility_matrix}
+								<Anchor
+									class="anchor"
+									href="/responsibility-matrices/{ebiosRmStudy.responsibility_matrix.id}"
+									>{ebiosRmStudy.responsibility_matrix.str}</Anchor
+								>
+							{:else}
+								<span class="font-bold">--</span>
+							{/if}
+						</span>
+					{/if}
+				</div>
+			</div>
+			<div class="w-full p-4 bg-surface-50-950 border rounded-md shadow-xs">
+				<h3 class="font-semibold text-lg text-surface-700-300 flex items-center space-x-2">
 					<i class="fa-solid fa-user text-purple-500"></i>
 					<span>{m.authors()}</span>
 				</h3>
@@ -187,7 +247,7 @@
 						<span>{m.objectsNotVisible({ count: countMasked(ebiosRmStudy.authors) })}</span>
 					</div>
 				{/if}
-				<ul class="list-disc list-inside text-gray-600">
+				<ul class="list-disc list-inside text-surface-600-400">
 					{#if ebiosRmStudy.authors?.length}
 						{#each ebiosRmStudy.authors as author}
 							{#if author.id && author.str}
@@ -199,8 +259,8 @@
 					{/if}
 				</ul>
 			</div>
-			<div class="w-full p-4 bg-gray-50 border rounded-md shadow-xs">
-				<h3 class="font-semibold text-lg text-gray-700 flex items-center space-x-2">
+			<div class="w-full p-4 bg-surface-50-950 border rounded-md shadow-xs">
+				<h3 class="font-semibold text-lg text-surface-700-300 flex items-center space-x-2">
 					<i class="fa-solid fa-users text-blue-500"></i>
 					<span>{m.reviewers()}</span>
 				</h3>
@@ -210,7 +270,7 @@
 						<span>{m.objectsNotVisible({ count: countMasked(ebiosRmStudy.reviewers) })}</span>
 					</div>
 				{/if}
-				<ul class="list-disc list-inside text-gray-600">
+				<ul class="list-disc list-inside text-surface-600-400">
 					{#if ebiosRmStudy.reviewers?.length}
 						{#each ebiosRmStudy.reviewers as reviewer}
 							{#if reviewer.id && reviewer.str}
@@ -228,15 +288,15 @@
 			class="relative p-4 space-y-4 rounded-md w-full flex flex-col items-center
                 {activeActivity === 'two'
 				? 'border-2 border-primary-500'
-				: 'border-2 border-gray-300 border-dashed'}"
+				: 'border-2 border-surface-300-700 border-dashed'}"
 		>
 			<span
-				class="absolute -top-3 bg-white font-bold {activeActivity === 'two'
+				class="absolute -top-3 bg-surface-50-950 font-bold {activeActivity === 'two'
 					? 'text-primary-500'
-					: 'text-gray-500'}">{m.activityTwo()}</span
+					: 'text-surface-600-400'}">{m.activityTwo()}</span
 			>
 			{#if Object.keys(data.relatedModels).length > 0}
-				<div class="card shadow-lg mt-8 bg-white w-full">
+				<div class="card shadow-lg mt-8 bg-surface-50-950 w-full">
 					<Tabs
 						value={group}
 						onValueChange={(e) => {
@@ -269,7 +329,7 @@
 										{#snippet selectButton()}
 											<div>
 												<span
-													class="inline-flex overflow-hidden rounded-md border bg-white shadow-xs"
+													class="inline-flex overflow-hidden rounded-md border bg-surface-50-950 shadow-xs"
 												>
 													<button
 														class="inline-block p-3 btn-mini-secondary w-12 focus:relative"
@@ -284,12 +344,12 @@
 										{#snippet addButton()}
 											<div>
 												<span
-													class="inline-flex overflow-hidden rounded-md border bg-white shadow-xs"
+													class="inline-flex overflow-hidden rounded-md border bg-surface-50-950 shadow-xs"
 												>
 													<button
 														class="inline-block border-e p-3 btn-mini-primary w-12 focus:relative"
 														data-testid="add-button"
-														title={safeTranslate('add-' + data.model.localName)}
+														title={safeTranslate('add-' + model.info.localName)}
 														onclick={(_) => modalCreateForm(model)}
 														><i class="fa-solid fa-file-circle-plus"></i>
 													</button>
@@ -304,17 +364,17 @@
 				</div>
 			{/if}
 		</div>
-		<div class="w-full p-4 bg-gray-50 border rounded-md shadow-xs">
-			<h3 class="font-semibold text-lg text-gray-700 flex items-center space-x-2">
-				<i class="fa-solid fa-eye text-gray-500 opacity-75"></i>
-				<span>{m.observation()}</span>
+		<div class="w-full p-4 bg-surface-50-950 border rounded-md shadow-xs">
+			<h3 class="font-semibold text-lg text-surface-700-300 flex items-center space-x-2">
+				<i class="fa-solid fa-clipboard-list text-surface-600-400 opacity-75"></i>
+				<span>{m.executiveSummary()}</span>
 			</h3>
 			{#if ebiosRmStudy.observation}
-				<div class="text-gray-600">
+				<div class="text-surface-600-400">
 					<MarkdownRenderer content={ebiosRmStudy.observation} />
 				</div>
 			{:else}
-				<p class="text-gray-600">{m.noObservation()}</p>
+				<p class="text-surface-600-400">{m.noObservation()}</p>
 			{/if}
 		</div>
 	</div>

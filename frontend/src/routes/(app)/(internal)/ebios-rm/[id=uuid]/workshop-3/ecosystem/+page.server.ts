@@ -1,10 +1,11 @@
 import { defaultDeleteFormAction, defaultWriteFormAction } from '$lib/utils/actions';
 import { BASE_API_URL } from '$lib/utils/constants';
 import { getModelInfo } from '$lib/utils/crud';
+import { formatSelectFieldData } from '$lib/utils/load';
 import { modelSchema } from '$lib/utils/schemas';
 import { listViewFields } from '$lib/utils/table';
 import type { ModelInfo, urlModel } from '$lib/utils/types';
-import { type TableSource } from '@skeletonlabs/skeleton-svelte';
+import { type TableSource } from '$lib/components/ModelTable/types';
 import { type Actions } from '@sveltejs/kit';
 import { superValidate } from 'sveltekit-superforms';
 import { zod4 as zod } from 'sveltekit-superforms/adapters';
@@ -46,10 +47,7 @@ export const load: PageServerLoad = async ({ params, fetch }) => {
 				}
 				const data = await response.json();
 				if (data) {
-					selectOptions[selectField.field] = Object.entries(data).map(([key, value]) => ({
-						label: value,
-						value: key
-					}));
+					selectOptions[selectField.field] = formatSelectFieldData(data, selectField);
 				}
 			})
 		);

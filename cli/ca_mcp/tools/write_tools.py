@@ -2,12 +2,18 @@
 
 from ..client import make_post_request, make_get_request
 from ..resolvers import (
+    resolve_ebios_rm_study_id,
     resolve_folder_id,
     resolve_perimeter_id,
     resolve_risk_matrix_id,
     resolve_framework_id,
     resolve_risk_assessment_id,
     resolve_applied_control_id,
+    resolve_asset_id,
+    resolve_actor_ids,
+    resolve_reference_control_id,
+    resolve_qualification_ids,
+    resolve_risk_level_index,
 )
 from ..config import GLOBAL_FOLDER_ID
 from ..utils.response_formatter import (
@@ -139,24 +145,37 @@ async def create_asset(
             payload["folder"] = folder_id
 
         sec_params = [
-            sec_confidentiality, sec_confidentiality_enabled,
-            sec_integrity, sec_integrity_enabled,
-            sec_availability, sec_availability_enabled,
+            sec_confidentiality,
+            sec_confidentiality_enabled,
+            sec_integrity,
+            sec_integrity_enabled,
+            sec_availability,
+            sec_availability_enabled,
         ]
         if any(p is not None for p in sec_params):
             payload["security_objectives"] = {
                 "objectives": {
                     "confidentiality": {
-                        "value": sec_confidentiality if sec_confidentiality is not None else 0,
-                        "is_enabled": sec_confidentiality_enabled if sec_confidentiality_enabled is not None else sec_confidentiality is not None,
+                        "value": sec_confidentiality
+                        if sec_confidentiality is not None
+                        else 0,
+                        "is_enabled": sec_confidentiality_enabled
+                        if sec_confidentiality_enabled is not None
+                        else sec_confidentiality is not None,
                     },
                     "integrity": {
                         "value": sec_integrity if sec_integrity is not None else 0,
-                        "is_enabled": sec_integrity_enabled if sec_integrity_enabled is not None else sec_integrity is not None,
+                        "is_enabled": sec_integrity_enabled
+                        if sec_integrity_enabled is not None
+                        else sec_integrity is not None,
                     },
                     "availability": {
-                        "value": sec_availability if sec_availability is not None else 0,
-                        "is_enabled": sec_availability_enabled if sec_availability_enabled is not None else sec_availability is not None,
+                        "value": sec_availability
+                        if sec_availability is not None
+                        else 0,
+                        "is_enabled": sec_availability_enabled
+                        if sec_availability_enabled is not None
+                        else sec_availability is not None,
                     },
                 }
             }
@@ -231,13 +250,41 @@ async def create_threat(
         return f"Error in create_threat: {str(e)}"
 
 
+APPLIED_CONTROL_STATUSES = [
+    "to_do",
+    "in_progress",
+    "on_hold",
+    "active",
+    "degraded",
+    "deprecated",
+    "--",
+]
+# Values the tool used to advertise, which the backend rejects
+LEGACY_APPLIED_CONTROL_STATUSES = {"planned": "to_do", "inactive": "deprecated"}
+
+
+def _normalize_applied_control_status(status: str) -> str:
+    status = LEGACY_APPLIED_CONTROL_STATUSES.get(status, status)
+    if status not in APPLIED_CONTROL_STATUSES:
+        raise ValueError(
+            f"Invalid status. Must be one of: {', '.join(APPLIED_CONTROL_STATUSES)}"
+        )
+    return status
+
+
 async def create_applied_control(
     name: str,
     description: str = "",
     eta: str = None,
     folder_id: str = None,
     category: str = "technical",
-    status: str = "planned",
+    status: str = None,
+    reference_control: str = None,
+    assets: list = None,
+    owner: list = None,
+    priority: int = None,
+    ref_id: str = None,
+    csf_function: str = None,
 ) -> str:
     """Create applied control (security measure)
 
@@ -246,8 +293,15 @@ async def create_applied_control(
         description: Description
         eta: Completion date YYYY-MM-DD
         folder_id: Folder ID/name
-        category: technical | physical | organizational | procedural
-        status: planned | active | inactive
+        category: policy | process | technical | physical | procedure
+        status: to_do | in_progress | on_hold | active | degraded | deprecated | --
+            (omitted = backend default "--"; legacy planned -> to_do, inactive -> deprecated)
+        reference_control: Reference control UUID, URN, ref_id (e.g. "POL.AI") or name
+        assets: List of asset IDs/names
+        owner: List of owners as actor UUIDs, emails or names (users, teams, entities)
+        priority: 1-4 (1=P1, 4=P4)
+        ref_id: Reference ID
+        csf_function: identify | protect | detect | respond | recover | govern
     """
     try:
         if not folder_id and GLOBAL_FOLDER_ID:
@@ -261,14 +315,33 @@ async def create_applied_control(
             "name": name,
             "description": description,
             "category": category,
-            "status": status,
         }
+
+        if status is not None:
+            payload["status"] = _normalize_applied_control_status(status)
 
         if folder_id:
             payload["folder"] = folder_id
 
         if eta:
             payload["eta"] = eta
+
+        if reference_control is not None:
+            payload["reference_control"] = resolve_reference_control_id(
+                reference_control
+            )
+        if assets is not None:
+            payload["assets"] = [
+                resolve_asset_id(asset, folder_id=folder_id) for asset in assets
+            ]
+        if owner is not None:
+            payload["owner"] = resolve_actor_ids(owner)
+        if priority is not None:
+            payload["priority"] = priority
+        if ref_id is not None:
+            payload["ref_id"] = ref_id
+        if csf_function is not None:
+            payload["csf_function"] = csf_function
 
         res = make_post_request("/applied-controls/", payload)
 
@@ -283,25 +356,72 @@ async def create_applied_control(
 
 async def create_risk_assessment(
     name: str,
-    risk_matrix_id: str,
-    perimeter_id: str,
+    risk_matrix_id: str = None,
+    perimeter_id: str = None,
     description: str = "",
     version: str = "1.0",
     status: str = "planned",
     folder_id: str = None,
+    ebios_rm_study_id: str = None,
+    risk_tolerance: int | str = None,
 ) -> str:
     """Create risk assessment with risk matrix and perimeter
 
     Args:
         name: Assessment name
-        risk_matrix_id: Risk matrix ID/name (required)
+        risk_matrix_id: Risk matrix ID/name. Optional with ebios_rm_study_id,
+            which supplies the study's own matrix
         perimeter_id: Perimeter ID/name (required)
         description: Description
         version: Version string
         status: planned | in_progress | in_review | done | deprecated
         folder_id: Folder ID/name (inherits from perimeter if not set)
+        ebios_rm_study_id: EBIOS RM study ID/name to attach it to (workshop 5).
+            Generates one risk scenario per selected operational scenario.
+            Refuses if the study already has one; sync that instead.
+        risk_tolerance: Risk level index of the matrix (-1 = unset), or a risk
+            level name/abbreviation (e.g. "High") resolved against the matrix
     """
     try:
+        if ebios_rm_study_id:
+            ebios_rm_study_id = resolve_ebios_rm_study_id(ebios_rm_study_id)
+            if not risk_matrix_id:
+                # the study's scales are what the generated scenarios are scored on
+                study = make_get_request(f"/ebios-rm/studies/{ebios_rm_study_id}/")
+                if study.status_code == 200:
+                    matrix = study.json().get("risk_matrix")
+                    risk_matrix_id = (
+                        matrix.get("id") if isinstance(matrix, dict) else matrix
+                    )
+
+        if ebios_rm_study_id:
+            # creating a second one silently detaches the first, so send the
+            # caller down the same path the workshop-5 page takes
+            existing = make_get_request(
+                "/risk-assessments/", params={"ebios_rm_study": ebios_rm_study_id}
+            )
+            if existing.status_code == 200:
+                rows = existing.json().get("results", [])
+                if rows:
+                    cur = rows[0]
+                    label = cur.get("str") or cur.get("name") or cur.get("id")
+                    return error_response(
+                        "Study already has a risk assessment",
+                        f"'{label}' (ID: {cur.get('id')}) is already linked to this "
+                        "EBIOS RM study. Creating another would detach it.",
+                        "Call sync_risk_assessment_from_ebios_rm with that ID to "
+                        "refresh it from the study, or delete it first to start over.",
+                        retry_allowed=False,
+                    )
+
+        if not risk_matrix_id:
+            return error_response(
+                "Missing risk matrix",
+                "risk_matrix_id is required unless ebios_rm_study_id supplies one.",
+                "Pass risk_matrix_id, or an ebios_rm_study_id whose study has a matrix.",
+                retry_allowed=True,
+            )
+
         # Resolve risk matrix name to ID if needed
         risk_matrix_id = resolve_risk_matrix_id(risk_matrix_id)
 
@@ -326,6 +446,14 @@ async def create_risk_assessment(
         # Folder is optional - if not provided, it inherits from perimeter
         if folder_id:
             payload["folder"] = folder_id
+
+        if ebios_rm_study_id:
+            payload["ebios_rm_study"] = ebios_rm_study_id
+
+        if risk_tolerance is not None:
+            payload["risk_tolerance"] = resolve_risk_level_index(
+                risk_tolerance, risk_matrix_id
+            )
 
         res = make_post_request("/risk-assessments/", payload)
 
@@ -361,6 +489,15 @@ async def create_risk_scenario(
     threat_library: str = None,
     applied_controls: list = None,
     existing_applied_controls: list = None,
+    qualifications: list = None,
+    owner: list = None,
+    inherent_proba: int = None,
+    inherent_impact: int = None,
+    residual_proba: int = None,
+    residual_impact: int = None,
+    treatment: str = None,
+    ref_id: str = None,
+    justification: str = None,
 ) -> str:
     """Create risk scenario with linked assets/threats/controls
 
@@ -377,6 +514,16 @@ async def create_risk_scenario(
         threat_library: Library URN to filter threats (e.g. "urn:intuitem:risk:library:intuitem-common-catalog")
         applied_controls: List of planned control IDs/names
         existing_applied_controls: List of existing control IDs/names
+        qualifications: List of qualifications: letters C/I/A(D)/T(P)
+            (confidentiality/integrity/availability/proof), names or UUIDs
+        owner: List of owners as actor UUIDs, emails or names
+        inherent_proba: Inherent probability index (from risk matrix)
+        inherent_impact: Inherent impact index (from risk matrix)
+        residual_proba: Residual probability index (from risk matrix)
+        residual_impact: Residual impact index (from risk matrix)
+        treatment: open | mitigate | accept | avoid | transfer | cancelled
+        ref_id: Reference ID
+        justification: Justification text
     """
     try:
         from ..resolvers import resolve_asset_id, resolve_applied_control_id
@@ -411,6 +558,24 @@ async def create_risk_scenario(
 
         if current_impact is not None:
             payload["current_impact"] = current_impact
+
+        for field, value in (
+            ("inherent_proba", inherent_proba),
+            ("inherent_impact", inherent_impact),
+            ("residual_proba", residual_proba),
+            ("residual_impact", residual_impact),
+            ("treatment", treatment),
+            ("ref_id", ref_id),
+            ("justification", justification),
+        ):
+            if value is not None:
+                payload[field] = value
+
+        if qualifications is not None:
+            payload["qualifications"] = resolve_qualification_ids(qualifications)
+
+        if owner is not None:
+            payload["owner"] = resolve_actor_ids(owner)
 
         # Resolve asset names to IDs if provided (pass folder_id to scope lookup)
         if assets:
@@ -474,6 +639,43 @@ async def create_risk_scenario(
             )
         else:
             return http_error_response(res.status_code, res.text)
+    except Exception as e:
+        return error_response(
+            "Internal Error",
+            str(e),
+            "Report this error to the user",
+            retry_allowed=False,
+        )
+
+
+async def sync_risk_assessment_from_ebios_rm(risk_assessment_id: str) -> str:
+    """Refresh a risk assessment from its linked EBIOS RM study (workshop 5)
+
+    Use this instead of creating a second assessment for the same study.
+    Scenarios are updated, created, or archived to match the study's current
+    selected objects.
+
+    Args:
+        risk_assessment_id: Risk assessment ID/name linked to an EBIOS RM study
+    """
+    try:
+        risk_assessment_id = resolve_risk_assessment_id(risk_assessment_id)
+        res = make_post_request(
+            f"/risk-assessments/{risk_assessment_id}/sync_from_ebios_rm/", {}
+        )
+        if res.status_code != 200:
+            return http_error_response(res.status_code, res.text)
+
+        data = res.json()
+        result = (
+            f"Synchronized from EBIOS RM: {data.get('updated', 0)} updated, "
+            f"{data.get('created', 0)} created, {data.get('archived', 0)} archived"
+        )
+        return success_response(
+            result,
+            "sync_risk_assessment_from_ebios_rm",
+            "Use get_risk_scenarios with this assessment to see the current scenarios.",
+        )
     except Exception as e:
         return error_response(
             "Internal Error",
@@ -949,7 +1151,6 @@ async def create_task_template(
     status: str = None,
     observation: str = None,
     evidences: list = None,
-    is_published: bool = False,
     task_date: str = None,
     is_recurrent: bool = False,
     ref_id: str = None,
@@ -972,15 +1173,14 @@ async def create_task_template(
         status: Status
         observation: Observation text
         evidences: Array of evidence UUIDs
-        is_published: Published flag
         task_date: Task date (YYYY-MM-DD)
         is_recurrent: Recurrent flag
         ref_id: Reference ID
         schedule: Schedule definition
         enabled: Enabled flag
         link: Link to evidence (e.g. Jira ticket)
-        assigned_to: Array of user UUIDs
-        assets: Array of asset UUIDs
+        assigned_to: List of assignees as actor UUIDs, emails or names
+        assets: List of asset IDs/names
         applied_controls: List of applied control IDs/names
         compliance_assessments: Array of compliance assessment UUIDs
         risk_assessments: Array of risk assessment UUIDs
@@ -993,7 +1193,6 @@ async def create_task_template(
         payload = {
             "name": name,
             "folder": folder_id,
-            "is_published": is_published,
             "is_recurrent": is_recurrent,
             "enabled": enabled,
         }
@@ -1019,9 +1218,11 @@ async def create_task_template(
         if link is not None:
             payload["link"] = link
         if assigned_to is not None:
-            payload["assigned_to"] = assigned_to
+            payload["assigned_to"] = resolve_actor_ids(assigned_to)
         if assets is not None:
-            payload["assets"] = assets
+            payload["assets"] = [
+                resolve_asset_id(asset, folder_id=folder_id) for asset in assets
+            ]
         if applied_controls is not None:
             resolved_controls = []
             for control in applied_controls:

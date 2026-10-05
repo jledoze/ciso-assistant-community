@@ -13,14 +13,16 @@
 	import Anchor from '$lib/components/Anchor/Anchor.svelte';
 
 	import MarkdownRenderer from '$lib/components/MarkdownRenderer.svelte';
+	import AuditTrailButton from '$lib/components/AuditTrail/AuditTrailButton.svelte';
+	import { hasRelationGraph } from '$lib/components/RelationsGraph/relations';
 	import CommentsPanel from '$lib/components/CommentsPanel/CommentsPanel.svelte';
+	import RiskAcceptancesSection from '$lib/components/RiskAcceptances/RiskAcceptancesSection.svelte';
 
 	import { goto } from '$app/navigation';
+	import { openRiskAcceptanceModal } from '$lib/utils/riskAcceptance';
 
 	import { onMount } from 'svelte';
-	import { canPerformAction } from '$lib/utils/access-control';
-	import List from '$lib/components/List/List.svelte';
-	import ConfirmModal from '$lib/components/Modals/ConfirmModal.svelte';
+	import { canPerformActionOnObject } from '$lib/utils/access-control';
 	import {
 		getModalStore,
 		type ModalComponent,
@@ -42,34 +44,46 @@
 
 	const modalStore: ModalStore = getModalStore();
 
+	let relationsOpen = $state(false);
+	const showRelations = $derived(
+		Boolean(page.data?.featureflags?.relations_graph) && hasRelationGraph('risk-scenarios')
+	);
+
 	const user = page.data.user;
 	const model = URL_MODEL_MAP['risk-scenarios'];
-	const canEditObject: boolean = canPerformAction({
-		user,
-		action: 'change',
-		model: model.name,
-		domain: data.scenario.folder.id
-	});
-	let color_map = $state({});
-	color_map['--'] = '#A9A9A9';
+	const canEditObject: boolean = $derived(
+		canPerformActionOnObject({
+			user,
+			action: 'change',
+			model: model.name,
+			object: data.scenario
+		})
+	);
+	const canCreateAcceptance = $derived(
+		canPerformActionOnObject({
+			user,
+			action: 'add',
+			model: 'riskacceptance',
+			object: data.scenario
+		})
+	);
+	const NO_VALUE_COLOR = '#A9A9A9';
+	const probaColors = Object.fromEntries(
+		data.riskMatrix.probability.map((prob) => [prob.name, prob.hexcolor])
+	);
+	const impactColors = Object.fromEntries(
+		data.riskMatrix.impact.map((impact) => [impact.name, impact.hexcolor])
+	);
 
-	// Map colors for risk levels
-	data.riskMatrix.risk.forEach((risk, i) => {
-		color_map[risk.name] = risk.hexcolor;
-	});
-
-	// Map colors for probability levels
-	data.riskMatrix.probability.forEach((prob, i) => {
-		color_map[prob.name] = prob.hexcolor;
-	});
-
-	// Map colors for impact levels
-	data.riskMatrix.impact.forEach((impact, i) => {
-		color_map[impact.name] = impact.hexcolor;
-	});
+	function levelBadge(colors: Record<string, string | undefined>, level?: { name?: string }) {
+		const bg = level?.name ? colors[level.name] : NO_VALUE_COLOR;
+		return bg
+			? { class: isDark(bg) ? 'text-white' : 'text-surface-950', style: `background-color: ${bg}` }
+			: { class: 'bg-surface-200-800 text-surface-950-50', style: '' };
+	}
 
 	let classesCellText = $derived((backgroundHexColor: string) => {
-		return isDark(backgroundHexColor) ? 'text-white' : '';
+		return isDark(backgroundHexColor) ? 'text-white' : 'text-surface-950';
 	});
 	function handleKeydown(event: KeyboardEvent) {
 		if (event.metaKey || event.ctrlKey) return;
@@ -130,6 +144,13 @@
 			syncingToActionsIsLoading = false;
 	});
 
+	function modalRequestRiskAcceptance(): void {
+		openRiskAcceptanceModal(modalStore, {
+			folderId: data.scenario.folder.id,
+			riskScenarioIds: [page.params.id]
+		});
+	}
+
 	onMount(() => {
 		// Add event listener when component mounts
 		window.addEventListener('keydown', handleKeydown);
@@ -153,31 +174,34 @@
 			</div>
 		</div>
 	{/if}
-	<div class="flex flex-col sm:flex-row card justify-between px-4 py-2 bg-white shadow-lg gap-4">
+	<div
+		class="flex flex-col sm:flex-row card justify-between px-4 py-2 bg-surface-50-950 shadow-lg gap-4"
+	>
 		<div class="flex flex-col space-y-4 min-w-0 flex-1">
 			<span class="flex flex-row flex-wrap gap-x-8 gap-y-2">
 				<div>
-					<p class="text-sm font-semibold text-gray-400">{m.refId()}</p>
+					<p class="text-sm font-semibold text-surface-400-600">{m.refId()}</p>
 					<p class="font-semibold">{data.scenario.ref_id}</p>
 				</div>
 				<div>
-					<p class="text-sm font-semibold text-gray-400">{m.name()}</p>
+					<p class="text-sm font-semibold text-surface-400-600">{m.name()}</p>
 					<p class="font-semibold">{data.scenario.name}</p>
 				</div>
 			</span>
 			<div>
-				<p class="text-sm font-semibold text-gray-400">{m.description()}</p>
+				<p class="text-sm font-semibold text-surface-400-600">{m.description()}</p>
 				{#if data.scenario.description}
 					<p class="whitespace-pre-line">
 						<MarkdownRenderer content={data.scenario.description} />
 					</p>
 				{:else}
-					<p class="text-gray-400 italic text-sm">{m.noDescription()}</p>
+					<p class="text-surface-400-600 italic text-sm">{m.noDescription()}</p>
 				{/if}
 			</div>
+			<RiskAcceptancesSection riskAcceptances={data.riskAcceptances} />
 		</div>
-		{#if canEditObject}
-			<div class="flex flex-col space-y-2 sm:my-auto shrink-0">
+		<div class="flex flex-col space-y-2 sm:self-start shrink-0">
+			{#if canEditObject}
 				<Anchor
 					href={`${page.url.pathname}/edit?next=${page.url.pathname}`}
 					class="btn preset-filled-primary-500 h-fit mt-1"
@@ -206,23 +230,48 @@
 						{m.syncToAppliedControls()}
 					</button>
 				{/if}
-			</div>
-		{/if}
+			{/if}
+			{#if canCreateAcceptance && !data.scenario.risk_assessment?.is_locked}
+				<button
+					class="btn text-white bg-linear-to-r from-orange-500 to-amber-500 h-fit"
+					onclick={() => modalRequestRiskAcceptance()}
+					data-testid="request-risk-acceptance-button"
+				>
+					<i class="fa-solid fa-signature mr-2"></i>
+					{m.requestRiskAcceptance()}
+				</button>
+			{/if}
+			<AuditTrailButton
+				model="risk-scenarios"
+				objectId={data.scenario.id}
+				folderId={data.scenario.folder?.id ?? user.root_folder_id}
+			/>
+			{#if showRelations}
+				<button
+					type="button"
+					class="btn h-fit text-white bg-linear-to-l from-violet-500 to-indigo-600"
+					data-testid="relations-button"
+					onclick={() => (relationsOpen = true)}
+				>
+					<i class="fa-solid fa-circle-nodes mr-2"></i>{m.relationsGraph()}
+				</button>
+			{/if}
+		</div>
 	</div>
 
 	<div class="flex flex-col sm:flex-row gap-2">
-		<div class="card px-4 py-2 bg-white shadow-lg w-full sm:w-1/2">
+		<div class="card px-4 py-2 bg-surface-50-950 shadow-lg w-full sm:w-1/2">
 			<h4 class="h4 font-semibold">{m.scope()}</h4>
 			<div class="flex flex-row flex-wrap gap-x-4 gap-y-2 justify-start">
 				<span>
-					<p class="text-sm font-semibold text-gray-400">{m.folder()}</p>
+					<p class="text-sm font-semibold text-surface-400-600">{m.folder()}</p>
 					<Anchor class="anchor text-sm font-semibold" href="/folders/{data.scenario.folder.id}"
 						>{data.scenario.folder.str}</Anchor
 					>
 				</span>
 				{#if data.scenario.risk_assessment.perimeter}
 					<span>
-						<p class="text-sm font-semibold text-gray-400">{m.perimeter()}</p>
+						<p class="text-sm font-semibold text-surface-400-600">{m.perimeter()}</p>
 						<Anchor
 							class="anchor text-sm font-semibold"
 							href="/perimeters/{data.scenario.risk_assessment.perimeter.id}"
@@ -231,7 +280,7 @@
 					</span>
 				{/if}
 				<span>
-					<p class="text-sm font-semibold text-gray-400">{m.riskAssessment()}</p>
+					<p class="text-sm font-semibold text-surface-400-600">{m.riskAssessment()}</p>
 					<Anchor
 						class="anchor text-sm font-semibold"
 						href="/risk-assessments/{data.scenario.risk_assessment.id}"
@@ -239,13 +288,13 @@
 					>
 				</span>
 				<span>
-					<p class="text-sm font-semibold text-gray-400">{m.version()}</p>
+					<p class="text-sm font-semibold text-surface-400-600">{m.version()}</p>
 					<p class="text-sm font-semibold">{data.scenario.version}</p>
 				</span>
 			</div>
 			{#if data.scenario.operational_scenario}
-				<div class="mt-4 pt-4 border-t border-gray-200">
-					<p class="text-sm font-semibold text-gray-400">{m.operationalScenario()}</p>
+				<div class="mt-4 pt-4 border-t border-surface-200-800">
+					<p class="text-sm font-semibold text-surface-400-600">{m.operationalScenario()}</p>
 					<Anchor
 						class="anchor text-sm font-semibold"
 						href="/operational-scenarios/{data.scenario.operational_scenario.id}"
@@ -254,17 +303,17 @@
 				</div>
 			{/if}
 		</div>
-		<div class="card px-4 py-2 bg-white shadow-lg w-full sm:w-1/2">
+		<div class="card px-4 py-2 bg-surface-50-950 shadow-lg w-full sm:w-1/2">
 			<h4 class="h4 font-semibold">{m.status()}</h4>
 			<div class="flex flex-row flex-wrap gap-x-4 gap-y-2 justify-start">
 				<div>
-					<p class="text-sm font-semibold text-gray-400">{m.lastUpdate()}</p>
+					<p class="text-sm font-semibold text-surface-400-600">{m.lastUpdate()}</p>
 					<p class="text-sm font-semibold">
 						{formatDate(new Date(data.scenario.updated_at), true, getLocale())}
 					</p>
 				</div>
 				<div>
-					<span class=" text-sm text-gray-400 font-semibold">{m.owner()}</span>
+					<span class=" text-sm text-surface-400-600 font-semibold">{m.owner()}</span>
 					<ul>
 						{#each data.scenario.owner as owner}
 							<li class="text-xs font-semibold">{owner.str}</li>
@@ -272,7 +321,7 @@
 					</ul>
 				</div>
 				<div>
-					<p class="text-sm font-semibold text-gray-400">{m.treatmentStatus()}</p>
+					<p class="text-sm font-semibold text-surface-400-600">{m.treatmentStatus()}</p>
 					<p class="text-sm font-semibold">
 						{safeTranslate(data.scenario.treatment)}
 					</p>
@@ -281,7 +330,9 @@
 		</div>
 	</div>
 	<div class="flex flex-col sm:flex-row gap-2">
-		<div class="card px-4 py-2 bg-white shadow-lg w-full sm:w-1/2 max-h-96 overflow-y-auto">
+		<div
+			class="card px-4 py-2 bg-surface-50-950 shadow-lg w-full sm:w-1/2 max-h-96 overflow-y-auto"
+		>
 			<h4 class="h4 font-semibold">{m.assets()}</h4>
 			<ModelTable
 				source={data.tables['assets']}
@@ -291,7 +342,7 @@
 			/>
 		</div>
 		<div
-			class="card px-4 py-2 bg-white shadow-lg space-y-4 w-full sm:w-1/2 max-h-96 overflow-y-auto"
+			class="card px-4 py-2 bg-surface-50-950 shadow-lg space-y-4 w-full sm:w-1/2 max-h-96 overflow-y-auto"
 		>
 			<h4 class="h4 font-semibold">{m.threats()}</h4>
 			<ModelTable
@@ -302,7 +353,7 @@
 			/>
 		</div>
 	</div>
-	<div class="card px-4 py-2 bg-white shadow-lg max-w-full max-h-96 overflow-y-auto">
+	<div class="card px-4 py-2 bg-surface-50-950 shadow-lg max-w-full max-h-96 overflow-y-auto">
 		<h4 class="h4 font-semibold">{m.vulnerabilities()}</h4>
 		<ModelTable
 			source={data.tables['vulnerabilities']}
@@ -311,7 +362,7 @@
 			baseEndpoint="/vulnerabilities?risk_scenarios={page.params.id}"
 		/>
 	</div>
-	<div class="card px-4 py-2 bg-white shadow-lg max-w-full max-h-96 overflow-y-auto">
+	<div class="card px-4 py-2 bg-surface-50-950 shadow-lg max-w-full max-h-96 overflow-y-auto">
 		<h4 class="h4 font-semibold">{m.securityExceptions()}</h4>
 		<ModelTable
 			source={data.tables['security-exceptions']}
@@ -322,18 +373,20 @@
 	</div>
 
 	<div class="flex flex-col sm:flex-row gap-2">
-		<div class="card px-4 py-2 bg-white shadow-lg w-full sm:w-1/2">
+		<div class="card px-4 py-2 bg-surface-50-950 shadow-lg w-full flex-1">
 			<h4 class="h4 font-semibold">{m.riskOrigin()}</h4>
 			{#if data.scenario.risk_origin}
-				<p class="font-semibold text-gray-600">{safeTranslate(data.scenario.risk_origin.name)}</p>
+				<p class="font-semibold text-surface-600-400">
+					{safeTranslate(data.scenario.risk_origin.name)}
+				</p>
 				{#if data.scenario.risk_origin.description}
-					<p class="text-sm text-gray-500 mt-1">{data.scenario.risk_origin.description}</p>
+					<p class="text-sm text-surface-600-400 mt-1">{data.scenario.risk_origin.description}</p>
 				{/if}
 			{:else}
-				<p class="text-gray-400 italic text-sm">{m.undefined()}</p>
+				<p class="text-surface-400-600 italic text-sm">{m.undefined()}</p>
 			{/if}
 		</div>
-		<div class="card px-4 py-2 bg-white shadow-lg w-full sm:w-1/2 max-h-96 overflow-y-auto">
+		<div class="card px-4 py-2 bg-surface-50-950 shadow-lg w-full flex-1 max-h-96 overflow-y-auto">
 			<h4 class="h4 font-semibold">{m.antecedentScenarios()}</h4>
 			{#if data.scenario.antecedent_scenarios && data.scenario.antecedent_scenarios.length > 0}
 				<ul class="space-y-1">
@@ -346,36 +399,64 @@
 					{/each}
 				</ul>
 			{:else}
-				<p class="text-gray-400 italic text-sm">{m.noAntecedentScenarios()}</p>
+				<p class="text-surface-400-600 italic text-sm">{m.noAntecedentScenarios()}</p>
 			{/if}
 		</div>
+		{#if page.data?.featureflags?.threat_modeling}
+			<div
+				class="card px-4 py-2 bg-surface-50-950 shadow-lg w-full flex-1 max-h-96 overflow-y-auto"
+			>
+				<h4 class="h4 font-semibold">{m.threatModel()}</h4>
+				{#if data.scenario.threat_models && data.scenario.threat_models.length > 0}
+					<ul class="space-y-1">
+						{#each data.scenario.threat_models as threatModel}
+							<li class="flex items-center gap-2">
+								<Anchor class="anchor text-sm font-semibold" href="/threat-models/{threatModel.id}">
+									{threatModel.str}
+								</Anchor>
+								<Anchor
+									class="anchor text-xs text-surface-600-400"
+									href="/threat-models/{threatModel.id}/graph"
+								>
+									<i class="fa-solid fa-diagram-project mr-1"></i>{m.graph()}
+								</Anchor>
+							</li>
+						{/each}
+					</ul>
+				{:else}
+					<p class="text-surface-400-600 italic text-sm">{m.undefined()}</p>
+				{/if}
+			</div>
+		{/if}
 	</div>
 
 	{#if page.data?.featureflags?.inherent_risk}
-		<div class="flex flex-col lg:flex-row gap-4 card px-4 py-2 bg-white shadow-lg">
+		<div class="flex flex-col lg:flex-row gap-4 card px-4 py-2 bg-surface-50-950 shadow-lg">
 			<div class="flex flex-col w-full lg:w-1/2">
 				<h4 class="h4 font-semibold">{m.inherentRisk()}</h4>
 			</div>
 			<div class="flex flex-row flex-wrap gap-4 items-center justify-center w-full lg:w-1/2 h-full">
 				<p class="flex flex-col">
-					<span class="text-sm font-semibold text-gray-400">{m.probability()}</span>
+					<span class="text-sm font-semibold text-surface-400-600">{m.probability()}</span>
 					<span
-						class="inline-block text-xs font-semibold text-center px-2 py-1 rounded min-w-16"
-						style="background-color: {data.scenario.inherent_proba?.name
-							? color_map[data.scenario.inherent_proba.name]
-							: color_map['--']}"
+						class="inline-block text-xs font-semibold text-center px-2 py-1 rounded min-w-16 {levelBadge(
+							probaColors,
+							data.scenario.inherent_proba
+						).class}"
+						style={levelBadge(probaColors, data.scenario.inherent_proba).style}
 					>
 						{data.scenario.inherent_proba ? safeTranslate(data.scenario.inherent_proba.name) : '--'}
 					</span>
 				</p>
 				<i class="fa-solid fa-xmark mt-5"></i>
 				<p class="flex flex-col">
-					<span class="text-sm font-semibold text-gray-400">{m.impact()}</span>
+					<span class="text-sm font-semibold text-surface-400-600">{m.impact()}</span>
 					<span
-						class="inline-block text-xs font-semibold text-center px-2 py-1 rounded min-w-16"
-						style="background-color: {data.scenario.inherent_impact?.name
-							? color_map[data.scenario.inherent_impact.name]
-							: color_map['--']}"
+						class="inline-block text-xs font-semibold text-center px-2 py-1 rounded min-w-16 {levelBadge(
+							impactColors,
+							data.scenario.inherent_impact
+						).class}"
+						style={levelBadge(impactColors, data.scenario.inherent_impact).style}
 					>
 						{data.scenario.inherent_impact
 							? safeTranslate(data.scenario.inherent_impact.name)
@@ -384,7 +465,7 @@
 				</p>
 				<i class="fa-solid fa-equals mt-5"></i>
 				<p class="flex flex-col">
-					<span class="text-sm font-semibold text-gray-400 whitespace-nowrap"
+					<span class="text-sm font-semibold text-surface-400-600 whitespace-nowrap"
 						>{m.inherentRiskLevel()}</span
 					>
 					<span
@@ -392,7 +473,7 @@
 							.inherent_level
 							? classesCellText(data.scenario.inherent_level.hexcolor)
 							: ''}"
-						style="background-color: {data.scenario.inherent_level?.hexcolor || color_map['--']}"
+						style="background-color: {data.scenario.inherent_level?.hexcolor || NO_VALUE_COLOR}"
 					>
 						{data.scenario.inherent_level ? safeTranslate(data.scenario.inherent_level.name) : '--'}
 					</span>
@@ -401,10 +482,10 @@
 		</div>
 	{/if}
 
-	<div class="flex flex-col lg:flex-row gap-4 card px-4 py-2 bg-white shadow-lg">
+	<div class="flex flex-col lg:flex-row gap-4 card px-4 py-2 bg-surface-50-950 shadow-lg">
 		<div class="flex flex-col w-full lg:w-1/2">
 			<h4 class="h4 font-semibold">{m.currentRisk()}</h4>
-			<p class="text-sm font-semibold text-gray-400">{m.existingControls()}</p>
+			<p class="text-sm font-semibold text-surface-400-600">{m.existingControls()}</p>
 			<ModelTable
 				source={data.tables['risk_scenarios_e']}
 				URLModel="applied-controls"
@@ -413,31 +494,33 @@
 		</div>
 		<div class="flex flex-row flex-wrap gap-4 items-center justify-center w-full lg:w-1/2">
 			<p class="flex flex-col">
-				<span class="text-sm font-semibold text-gray-400">{m.probability()}</span>
+				<span class="text-sm font-semibold text-surface-400-600">{m.probability()}</span>
 				<span
-					class="inline-block text-xs font-semibold text-center px-2 py-1 rounded min-w-16"
-					style="background-color: {data.scenario.current_proba?.name
-						? color_map[data.scenario.current_proba.name]
-						: color_map['--']}"
+					class="inline-block text-xs font-semibold text-center px-2 py-1 rounded min-w-16 {levelBadge(
+						probaColors,
+						data.scenario.current_proba
+					).class}"
+					style={levelBadge(probaColors, data.scenario.current_proba).style}
 				>
 					{data.scenario.current_proba ? safeTranslate(data.scenario.current_proba.name) : '--'}
 				</span>
 			</p>
 			<i class="fa-solid fa-xmark mt-5"></i>
 			<p class="flex flex-col">
-				<span class="text-sm font-semibold text-gray-400">{m.impact()}</span>
+				<span class="text-sm font-semibold text-surface-400-600">{m.impact()}</span>
 				<span
-					class="inline-block text-xs font-semibold text-center px-2 py-1 rounded min-w-16"
-					style="background-color: {data.scenario.current_impact?.name
-						? color_map[data.scenario.current_impact.name]
-						: color_map['--']}"
+					class="inline-block text-xs font-semibold text-center px-2 py-1 rounded min-w-16 {levelBadge(
+						impactColors,
+						data.scenario.current_impact
+					).class}"
+					style={levelBadge(impactColors, data.scenario.current_impact).style}
 				>
 					{data.scenario.current_impact ? safeTranslate(data.scenario.current_impact.name) : '--'}
 				</span>
 			</p>
 			<i class="fa-solid fa-equals mt-5"></i>
 			<p class="flex flex-col">
-				<span class="text-sm font-semibold text-gray-400 whitespace-nowrap"
+				<span class="text-sm font-semibold text-surface-400-600 whitespace-nowrap"
 					>{m.currentRiskLevel()}</span
 				>
 				<span
@@ -451,10 +534,10 @@
 			</p>
 		</div>
 	</div>
-	<div class="flex flex-col lg:flex-row gap-4 card px-4 py-2 bg-white shadow-lg">
+	<div class="flex flex-col lg:flex-row gap-4 card px-4 py-2 bg-surface-50-950 shadow-lg">
 		<div class="flex flex-col w-full lg:w-1/2">
 			<h4 class="h4 font-semibold">{m.residualRisk()}</h4>
-			<p class="text-sm font-semibold text-gray-400">{m.extraAppliedControls()}</p>
+			<p class="text-sm font-semibold text-surface-400-600">{m.extraAppliedControls()}</p>
 			<ModelTable
 				source={data.tables['risk_scenarios']}
 				URLModel="applied-controls"
@@ -463,31 +546,33 @@
 		</div>
 		<div class="flex flex-row flex-wrap gap-4 items-center justify-center w-full lg:w-1/2">
 			<p class="flex flex-col">
-				<span class="text-sm font-semibold text-gray-400">{m.probability()}</span>
+				<span class="text-sm font-semibold text-surface-400-600">{m.probability()}</span>
 				<span
-					class="inline-block text-xs font-semibold text-center px-2 py-1 rounded min-w-16"
-					style="background-color: {data.scenario.residual_proba?.name
-						? color_map[data.scenario.residual_proba.name]
-						: color_map['--']}"
+					class="inline-block text-xs font-semibold text-center px-2 py-1 rounded min-w-16 {levelBadge(
+						probaColors,
+						data.scenario.residual_proba
+					).class}"
+					style={levelBadge(probaColors, data.scenario.residual_proba).style}
 				>
 					{data.scenario.residual_proba ? safeTranslate(data.scenario.residual_proba.name) : '--'}
 				</span>
 			</p>
 			<i class="fa-solid fa-xmark mt-5"></i>
 			<p class="flex flex-col">
-				<span class="text-sm font-semibold text-gray-400">{m.impact()}</span>
+				<span class="text-sm font-semibold text-surface-400-600">{m.impact()}</span>
 				<span
-					class="inline-block text-xs font-semibold text-center px-2 py-1 rounded min-w-16"
-					style="background-color: {data.scenario.residual_impact?.name
-						? color_map[data.scenario.residual_impact.name]
-						: color_map['--']}"
+					class="inline-block text-xs font-semibold text-center px-2 py-1 rounded min-w-16 {levelBadge(
+						impactColors,
+						data.scenario.residual_impact
+					).class}"
+					style={levelBadge(impactColors, data.scenario.residual_impact).style}
 				>
 					{data.scenario.residual_impact ? safeTranslate(data.scenario.residual_impact.name) : '--'}
 				</span>
 			</p>
 			<i class="fa-solid fa-equals mt-5"></i>
 			<p class="flex flex-col">
-				<span class="text-sm font-semibold text-gray-400 whitespace-nowrap"
+				<span class="text-sm font-semibold text-surface-400-600 whitespace-nowrap"
 					>{m.residualRiskLevel()}</span
 				>
 				<span
@@ -501,9 +586,9 @@
 			</p>
 		</div>
 	</div>
-	<div class="card px-4 py-2 bg-white shadow-lg space-y-2">
+	<div class="card px-4 py-2 bg-surface-50-950 shadow-lg space-y-2">
 		<div>
-			<p class="text-sm font-semibold text-gray-400">{m.qualifications()}</p>
+			<p class="text-sm font-semibold text-surface-400-600">{safeTranslate('qualifications')}</p>
 			<p>
 				<span class="font-semibold">
 					{#each data.scenario.qualifications.sort( (a, b) => safeTranslate(a.str).localeCompare(safeTranslate(b.str)) ) as qualification, i}
@@ -514,7 +599,7 @@
 			</p>
 		</div>
 		<div>
-			<p class="text-sm font-semibold text-gray-400">{m.strengthOfKnowledge()}</p>
+			<p class="text-sm font-semibold text-surface-400-600">{m.strengthOfKnowledge()}</p>
 			<p>
 				{#if data.scenario.strength_of_knowledge.symbol}
 					{data.scenario.strength_of_knowledge.symbol}
@@ -525,18 +610,18 @@
 			</p>
 		</div>
 		<div>
-			<p class="text-sm font-semibold text-gray-400">{m.justification()}</p>
+			<p class="text-sm font-semibold text-surface-400-600">{m.justification()}</p>
 			<p class="">
 				{#if data.scenario.justification}
 					<p><MarkdownRenderer content={data.scenario.justification} /></p>
 				{:else}
-					<p class="text-gray-400 italic text-sm">{m.noJustification()}</p>
+					<p class="text-surface-400-600 italic text-sm">{m.noJustification()}</p>
 				{/if}
 			</p>
 		</div>
 		{#if data.scenario.filtering_labels && data.scenario.filtering_labels.length > 0}
 			<div>
-				<p class="text-sm font-semibold text-gray-400">{m.labels()}</p>
+				<p class="text-sm font-semibold text-surface-400-600">{m.labels()}</p>
 				<div class="flex flex-wrap gap-2 mt-1">
 					{#each data.scenario.filtering_labels as label}
 						<Anchor href="/filtering-labels/{label.id}" class="anchor">
@@ -553,3 +638,15 @@
 		<CommentsPanel parentType="risk_scenario" parentId={data.scenario.id} />
 	{/if}
 </div>
+
+{#if showRelations}
+	{#await import('$lib/components/RelationsGraph/RelationsDrawer.svelte') then { default: RelationsDrawer }}
+		<RelationsDrawer
+			open={relationsOpen}
+			urlModel="risk-scenarios"
+			id={data.scenario.id}
+			name={data.scenario.name ?? data.scenario.str ?? ''}
+			onClose={() => (relationsOpen = false)}
+		/>
+	{/await}
+{/if}

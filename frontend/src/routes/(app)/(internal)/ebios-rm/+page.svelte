@@ -9,6 +9,7 @@
 		type ModalSettings,
 		type ModalStore
 	} from '$lib/components/Modals/stores';
+	import { consumeCreateIntent } from '$lib/utils/create-intent';
 
 	const modalStore: ModalStore = getModalStore();
 
@@ -24,8 +25,7 @@
 			ref: CreateModal,
 			props: {
 				form: data.createForm,
-				model: data.model,
-				customNameDescription: true
+				model: data.model
 			}
 		};
 		let modal: ModalSettings = {
@@ -36,12 +36,16 @@
 		};
 		modalStore.trigger(modal);
 	}
+
+	$effect(() => {
+		consumeCreateIntent({ urlModel: URLModel, modelName: data.model.name, open: modalCreateForm });
+	});
 </script>
 
 <ModelTable source={data.table} deleteForm={data.deleteForm} {URLModel}>
 	{#snippet addButton()}
 		<div>
-			<span class="inline-flex overflow-hidden rounded-md border bg-white shadow-xs">
+			<span class="inline-flex overflow-hidden rounded-md border bg-surface-50-950 shadow-xs">
 				<button
 					class="inline-block p-3 btn-mini-primary w-12 focus:relative"
 					data-testid="add-button"

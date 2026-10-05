@@ -12,6 +12,8 @@
 		entity_assessment: {
 			provider: string;
 			entity_assessment_id: string;
+			compliance_assessment_id: string;
+			review_assignment_id: string | null;
 			baseline: string;
 			solutions: string;
 			completion: number;
@@ -22,18 +24,21 @@
 			eta_date: string;
 			observation: string;
 			reviewers: string;
-			has_questions: boolean;
 		};
 	}
 
 	let { entity_assessment }: Props = $props();
 
-	// Function to determine progress bar color based on completion percentage
-	function getProgressColor(progress: number): string {
-		if (progress < 50) return 'bg-red-500';
-		if (progress < 75) return 'bg-yellow-500';
-		return 'bg-green-500';
-	}
+	// Each dial links where its number comes from: what the third party filled in is
+	// read in the respondent view, the auditor's own progress on the audit itself.
+	const auditHref = $derived(
+		`/compliance-assessments/${entity_assessment.compliance_assessment_id}`
+	);
+	const completionHref = $derived(
+		entity_assessment.review_assignment_id
+			? `/auditee-assessments/${entity_assessment.review_assignment_id}`
+			: auditHref
+	);
 
 	// Function to determine conclusion badge color
 	function getConclusionColor(conclusion: string): string {
@@ -44,9 +49,41 @@
 			completed: 'bg-green-100 text-green-800',
 			ok: 'bg-green-100 text-green-800'
 		};
-		return lookup[conclusion.toLowerCase()] || 'bg-gray-100 text-gray-800';
+		return lookup[conclusion.toLowerCase()] || 'bg-surface-100-900 text-surface-950-50';
 	}
 </script>
+
+{#snippet progressDial(value: number, label: string, testid: string, hint: string, href: string)}
+	<div class="flex flex-col items-center" title={hint}>
+		<span class="block text-xs text-surface-600-400 mb-1 text-center">{label}</span>
+		<div class="text-surface-950-50">
+			<svg viewBox="0 0 100 100" width="72" height="72">
+				<circle cx="50" cy="50" r="45" fill="none" stroke="#e5e7eb" stroke-width="8" />
+				<circle
+					cx="50"
+					cy="50"
+					r="45"
+					fill="none"
+					stroke={value < 50 ? '#ef4444' : value < 75 ? '#eab308' : '#22c55e'}
+					stroke-width="8"
+					stroke-dasharray="283"
+					stroke-dashoffset={283 - (283 * (value ?? 0)) / 100}
+					transform="rotate(-90 50 50)"
+				/>
+				<text
+					x="50"
+					y="55"
+					text-anchor="middle"
+					font-size="20"
+					font-weight="bold"
+					fill="currentColor"
+				>
+					<a data-testid={testid} {href}>{value ?? 0}%</a>
+				</text>
+			</svg>
+		</div>
+	</div>
+{/snippet}
 
 <div
 	class="perspective-1000 w-full h-full min-h-[420px] relative w-full h-full transition-transform duration-800 {isFlipped
@@ -57,7 +94,7 @@
 >
 	<!-- Front face of the card -->
 	<div
-		class="absolute w-full h-full rounded-lg shadow-lg bg-white overflow-hidden"
+		class="absolute w-full h-full rounded-lg shadow-lg bg-surface-50-950 overflow-hidden"
 		style="backface-visibility: hidden;"
 	>
 		<!-- Flip button for front face -->
@@ -77,7 +114,7 @@
 				width="18"
 				height="18"
 				stroke-width="2"
-				class="text-gray-500"
+				class="text-surface-600-400"
 			>
 				<path d="M3 8l4 -4l4 4"></path>
 				<path d="M7 4l0 9"></path>
@@ -89,8 +126,8 @@
 		<!-- Card content (front) -->
 		<div class="p-4 h-full flex flex-col">
 			<!-- Card header with provider name and conclusion -->
-			<div class="flex justify-between items-center pb-3 border-b border-gray-200 mb-3">
-				<h3 class="font-bold text-lg text-gray-900" data-testid="provider">
+			<div class="flex justify-between items-center pb-3 border-b border-surface-200-800 mb-3">
+				<h3 class="font-bold text-lg text-surface-950-50" data-testid="provider">
 					<a
 						href="/entity-assessments/{entity_assessment.entity_assessment_id}"
 						class="hover:text-primary-600 hover:underline"
@@ -114,78 +151,51 @@
 			<div class="flex flex-col gap-3">
 				<!-- Solution name -->
 				<div class="mb-3">
-					<span class="block text-sm text-gray-500">Solution(s)</span>
-					<div class="font-semibold text-gray-800" data-testid="solutions">
+					<span class="block text-sm text-surface-600-400">Solution(s)</span>
+					<div class="font-semibold text-surface-950-50" data-testid="solutions">
 						{entity_assessment.solutions}
 					</div>
 				</div>
 
 				<!-- Framework/Baseline -->
 				<div class="mb-3">
-					<span class="block text-sm text-gray-500">Baseline</span>
+					<span class="block text-sm text-surface-600-400">Baseline</span>
 					<div
-						class="inline-block bg-gray-100 px-2 py-1 rounded-sm text-sm font-mono overflow-hidden"
+						class="inline-block bg-surface-100-900 px-2 py-1 rounded-sm text-sm font-mono overflow-hidden"
 					>
 						<div class="line-clamp-2 min-h-[2.4em] flex items-center" data-testid="baseline">
 							{entity_assessment.baseline}
 						</div>
 					</div>
 				</div>
-				<span class="block text-sm text-gray-500 mb-2">Compliance review progress</span>
-				<!-- Progress circle - SVG can't be fully replaced with Tailwind -->
-				<div
-					class="flex flex-col items-center"
-					title="Any Compliance status except 'not assessed' counts"
-				>
-					<div class="text-gray-900">
-						<svg viewBox="0 0 100 100" width="80" height="80">
-							<!-- Background circle -->
-							<circle cx="50" cy="50" r="45" fill="none" stroke="#e5e7eb" stroke-width="8" />
-
-							<!-- Progress circle -->
-							<circle
-								cx="50"
-								cy="50"
-								r="45"
-								fill="none"
-								stroke={entity_assessment.review_progress < 50
-									? '#ef4444'
-									: entity_assessment.review_progress < 75
-										? '#eab308'
-										: '#22c55e'}
-								stroke-width="8"
-								stroke-dasharray="283"
-								stroke-dashoffset={283 - (283 * entity_assessment.review_progress) / 100}
-								transform="rotate(-90 50 50)"
-							/>
-
-							<!-- Percentage text -->
-							<text
-								x="50"
-								y="55"
-								text-anchor="middle"
-								font-size="20"
-								font-weight="bold"
-								fill="currentColor"
-							>
-								<a
-									data-testid="review_progress"
-									href="/compliance-assessments/{entity_assessment.compliance_assessment_id}"
-									>{entity_assessment.review_progress}%</a
-								>
-							</text>
-						</svg>
-					</div>
+				<!-- The two halves of the exchange: what the third party has filled in,
+				     and what the auditor has reviewed. Showing one alone reads as no
+				     progress while the other side is well underway. -->
+				<div class="grid grid-cols-2 gap-1">
+					{@render progressDial(
+						entity_assessment.completion,
+						'Completion',
+						'completion',
+						'How much of the questionnaire the third party has filled in',
+						completionHref
+					)}
+					{@render progressDial(
+						entity_assessment.review_progress,
+						'Review progress',
+						'review_progress',
+						"Any Compliance status except 'not assessed' counts",
+						auditHref
+					)}
 				</div>
 
 				<!-- Dates -->
-				<div class="grid grid-cols-2 gap-2 text-sm text-gray-600">
+				<div class="grid grid-cols-2 gap-2 text-sm text-surface-600-400">
 					<div>
-						<span class="block text-gray-500" data-testid="last_update">Last update</span>
+						<span class="block text-surface-600-400" data-testid="last_update">Last update</span>
 						{entity_assessment.last_update}
 					</div>
 					<div>
-						<span class="block text-gray-500" data-testid="due_date">Due date</span>
+						<span class="block text-surface-600-400" data-testid="due_date">Due date</span>
 						{entity_assessment.due_date}
 					</div>
 				</div>
@@ -195,7 +205,7 @@
 
 	<!-- Back face of the card -->
 	<div
-		class="absolute w-full h-full rounded-lg shadow-md bg-white overflow-hidden"
+		class="absolute w-full h-full rounded-lg shadow-md bg-surface-50-950 overflow-hidden"
 		style="backface-visibility: hidden; transform: rotateX(180deg);"
 	>
 		<!-- Flip button for back face -->
@@ -215,7 +225,7 @@
 				width="18"
 				height="18"
 				stroke-width="2"
-				class="text-gray-500"
+				class="text-surface-600-400"
 			>
 				<path d="M3 8l4 -4l4 4"></path>
 				<path d="M7 4l0 9"></path>
@@ -226,7 +236,7 @@
 
 		<!-- Card content (back) -->
 		<div class="p-4 h-full flex flex-col">
-			<h3 class="font-bold text-lg text-gray-900 mb-3 pr-10">
+			<h3 class="font-bold text-lg text-surface-950-50 mb-3 pr-10">
 				<a
 					href="/entity-assessments/{entity_assessment.entity_assessment_id}"
 					class="hover:text-primary-600 hover:underline"
@@ -238,31 +248,14 @@
 			<!-- Additional details could go here -->
 			<div class="mb-4">
 				<div class="">
-					{#if entity_assessment?.has_questions}
-						<!-- Progress bar -->
-						<div class="mt-3 mb-6" title="Any answer of associated questions unless not set">
-							<div class="flex justify-between items-center mb-1">
-								<span class="text-sm text-gray-500">Questions completion</span>
-								<span class="text-sm font-medium" data-testid="completion"
-									>{entity_assessment.completion}%</span
-								>
-							</div>
-							<div class="w-full bg-gray-200 rounded-full h-2">
-								<div
-									class="h-2 rounded-full {getProgressColor(entity_assessment.completion)}"
-									style="width: {entity_assessment.completion}%"
-								></div>
-							</div>
-						</div>
-					{/if}
 					<div class="w-full mt-4">
 						<div class="flex mb-4">
-							<div class="w-3 h-3 rounded-full bg-gray-300 mt-1 mr-3"></div>
+							<div class="w-3 h-3 rounded-full bg-surface-300-700 mt-1 mr-3"></div>
 							<div class="flex-1">
 								<p class="font-semibold mb-1" data-testid="reviewers">
 									{entity_assessment.reviewers}
 								</p>
-								<p class="text-gray-600">Reviewer(s)</p>
+								<p class="text-surface-600-400">Reviewer(s)</p>
 							</div>
 						</div>
 					</div>
@@ -270,8 +263,8 @@
 			</div>
 
 			<div class="mt-2">
-				<span class="block text-sm text-gray-500 mb-2">Observation</span>
-				<p class="text-gray-600 leading-relaxed text-xs" data-testid="observation">
+				<span class="block text-sm text-surface-600-400 mb-2">Observation</span>
+				<p class="text-surface-600-400 leading-relaxed text-xs" data-testid="observation">
 					{entity_assessment.observation}
 				</p>
 			</div>

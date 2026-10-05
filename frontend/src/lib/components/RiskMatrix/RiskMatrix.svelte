@@ -94,10 +94,10 @@
 {#snippet xAxisHeadersSnippet()}
 	{#each xAxisHeaders as xHeader, j}
 		<div
-			class="flex flex-col items-center justify-center bg-gray-200 min-h-20 border-dotted border-black border-2 text-center p-1 {classesCellText(
+			class="flex flex-col items-center justify-center bg-surface-200-800 min-h-20 border-dotted border-black border-2 text-center p-1 {classesCellText(
 				xHeader.hexcolor
 			)}"
-			style="background: {xHeader.hexcolor ?? '#FFFFFF'}"
+			style={xHeader.hexcolor ? `background: ${xHeader.hexcolor}` : ''}
 			data-testid="x-axis-header-{j}"
 		>
 			<Tooltip openDelay={0} closeDelay={100}>
@@ -132,7 +132,7 @@
 
 {#if grid.length === 0}
 	<div
-		class="flex items-center justify-center p-8 text-gray-500 italic"
+		class="flex items-center justify-center p-8 text-surface-600-400 italic"
 		data-testid="risk-matrix-empty"
 	>
 		<i class="fa-solid fa-triangle-exclamation mr-2"></i>
@@ -168,10 +168,10 @@
 				{#each finalMatrix as row, i}
 					{@const yHeader = yAxisHeaders[finalMatrix.length - 1 - i]}
 					<div
-						class="flex flex-col items-center min-h-20 justify-center bg-gray-200 border-dotted border-black border-2 text-center p-1 {classesCellText(
+						class="flex flex-col items-center min-h-20 justify-center bg-surface-200-800 border-dotted border-black border-2 text-center p-1 {classesCellText(
 							yHeader.hexcolor
 						)}"
-						style="background: {yHeader.hexcolor ?? '#FFFFFF'}"
+						style={yHeader.hexcolor ? `background: ${yHeader.hexcolor}` : ''}
 						data-testid="y-axis-header-{i}"
 					>
 						<Tooltip openDelay={0} closeDelay={100} positioning={{ placement: 'bottom-end' }}>

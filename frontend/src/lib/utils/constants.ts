@@ -1,11 +1,18 @@
 import { env } from '$env/dynamic/public';
 import { m } from '$paraglide/messages';
 
-export const BASE_API_URL = `${
-	Object.hasOwn(env, 'PUBLIC_BACKEND_API_URL')
-		? env.PUBLIC_BACKEND_API_URL
-		: 'http://localhost:8000/api'
-}`;
+const rawBackendApiUrl = Object.hasOwn(env, 'PUBLIC_BACKEND_API_URL')
+	? env.PUBLIC_BACKEND_API_URL
+	: 'http://localhost:8000/api';
+
+// Strip default ports so this matches request.url in handleFetch's startsWith check (issue #4422).
+export const BASE_API_URL = (() => {
+	try {
+		return new URL(rawBackendApiUrl).href.replace(/\/$/, '');
+	} catch {
+		return rawBackendApiUrl;
+	}
+})();
 
 export const DEFAULT_LANGUAGE = `${
 	Object.hasOwn(env, 'PUBLIC_DEFAULT_LANGUAGE') ? env.PUBLIC_DEFAULT_LANGUAGE : 'en'
@@ -28,11 +35,19 @@ export const complianceResultColorMap: { [key: string]: string } = {
 };
 
 export const complianceResultTailwindColorMap: { [key: string]: string } = {
-	not_assessed: 'bg-gray-300',
-	partially_compliant: 'bg-yellow-300',
-	non_compliant: 'bg-red-300',
-	compliant: 'bg-green-300',
+	not_assessed: 'bg-surface-300-700',
+	partially_compliant: 'bg-yellow-300 dark:bg-yellow-600',
+	non_compliant: 'bg-red-300 dark:bg-red-800',
+	compliant: 'bg-green-300 dark:bg-green-700',
 	not_applicable: 'bg-black text-white'
+};
+
+export const postureResultTailwindColorMap: { [key: string]: string } = {
+	pass: 'bg-green-300 dark:bg-green-700',
+	fail: 'bg-red-300 dark:bg-red-800',
+	error: 'bg-amber-300 dark:bg-amber-600',
+	not_applicable: 'bg-black text-white',
+	not_checked: 'bg-surface-300-700'
 };
 
 export const complianceStatusColorMap: { [key: string]: string } = {
@@ -43,17 +58,17 @@ export const complianceStatusColorMap: { [key: string]: string } = {
 };
 
 export const complianceStatusTailwindColorMap = {
-	to_do: 'bg-gray-400',
-	in_progress: 'bg-amber-500',
+	to_do: 'bg-surface-400-600',
+	in_progress: 'bg-amber-500 dark:bg-amber-600',
 	in_review: 'bg-blue-500',
-	done: 'bg-green-300'
+	done: 'bg-green-300 dark:bg-green-700'
 };
 
 export const extendedResultColorMap: { [key: string]: string } = {
 	not_set: '#d1d5db',
 	major_nonconformity: '#dc2626',
 	minor_nonconformity: '#f97316',
-	observation: '#eab308',
+	observation_sensitive_point: '#eab308',
 	opportunity_for_improvement: '#3b82f6',
 	good_practice: '#22c55e'
 };
@@ -73,6 +88,14 @@ export const breakdownSemanticColorMap: { [key: string]: string } = {
 	in_progress: '#f59e0b',
 	in_review: '#3b82f6',
 	done: '#86efac',
+	// Applied control statuses. '--' is AppliedControl.Status.UNDEFINED, the field
+	// default, so it is usually the largest series: keep it muted so the statuses
+	// that carry the signal stay legible next to it.
+	'--': '#cbd5e1',
+	active: '#22c55e',
+	on_hold: '#a855f7',
+	degraded: '#f97316',
+	deprecated: '#64748b',
 	// Severity (findings, incidents, vulnerabilities, exceptions)
 	critical: '#dc2626',
 	high: '#ea580c',
@@ -165,13 +188,53 @@ export const LOCALE_DISPLAY_MAP = {
 	zh: '🇨🇳 简体中文',
 	lt: '🇱🇹 Lietuvių',
 	ko: '🇰🇷 한국어',
-	et: '🇪🇪 Eesti'
+	et: '🇪🇪 Eesti',
+	sk: '🇸🇰 Slovenčina',
+	sl: '🇸🇮 Slovenščina'
 };
 
 export const ISO_8601_REGEX =
 	/^([+-]?\d{4}(?!\d{2}\b))((-?)((0[1-9]|1[0-2])(\3([12]\d|0[1-9]|3[01]))?|W([0-4]\d|5[0-2])(-?[1-7])?|(00[1-9]|0[1-9]\d|[12]\d{2}|3([0-5]\d|6[1-6])))([T\s]((([01]\d|2[0-3])((:?)[0-5]\d)?|24:?00)([.,]\d+(?!:))?)?(\17[0-5]\d([.,]\d+)?)?([zZ]|([+-])([01]\d|2[0-3]):?([0-5]\d)?)?)?)?$/;
 
+/**
+ * Fields rendered as localised dates when their value is an ISO 8601 string. The regex
+ * alone is not the test: some ISO values stay verbatim, so the field must be declared
+ * too. Union of the two lists ModelTable and DetailView used to keep separately.
+ */
+export const DATE_FIELDS_TO_FORMAT = [
+	'accepted_at',
+	'as_of',
+	'authority_notified_on',
+	'closed_at',
+	'closing_date',
+	'commission_date',
+	'created_at',
+	'detected_at',
+	'discovered_on',
+	'due_date',
+	'end_date',
+	'eta',
+	'expiration_date',
+	'expiry_date',
+	'exploited_date_added',
+	'last_assessment_date',
+	'occurred_at',
+	'published_date',
+	'read_at',
+	'rejected_at',
+	'reported_at',
+	'requested_on',
+	'resolved_at',
+	'revoked_at',
+	'start_date',
+	'subjects_notified_on',
+	'timestamp',
+	'updated_at',
+	'validation_deadline'
+];
+
 export const SECURITY_OBJECTIVE_SCALE_MAP = {
+	'1-3': ['1', '2', '3', '3', '3'],
 	'0-3': ['0', '1', '2', '3', '3'],
 	'0-4': ['0', '1', '2', '3', '4'],
 	'1-4': ['1', '2', '3', '4', '4'],

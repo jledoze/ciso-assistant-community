@@ -13,7 +13,9 @@
 
 	const modalStore: ModalStore = getModalStore();
 
-	const cBase = 'card bg-surface-50 p-4 w-modal shadow-xl space-y-4';
+	// A lazy picker renders no options up front, so the card needs its own width.
+	const cBase =
+		'card bg-surface-100-900 border border-surface-500 p-4 w-[640px] max-w-[90vw] shadow-xl space-y-4';
 	const cHeader = 'text-2xl font-bold whitespace-pre-line';
 
 	interface Props {
@@ -25,6 +27,7 @@
 		label?: string;
 		optionsInfoFields?: {
 			fields: { field: string; translate?: boolean }[];
+			position?: 'suffix' | 'prefix';
 			classes?: string;
 		};
 		lazy?: boolean;
@@ -41,7 +44,7 @@
 			fields: [],
 			classes: 'text-surface-500'
 		},
-		lazy = false
+		lazy = true
 	}: Props = $props();
 
 	const schema = modelSchema(urlModel);
@@ -104,15 +107,14 @@
 			<header class={cHeader} data-testid="modal-title">
 				{$modalStore[0].title ?? '(title missing)'}
 			</header>
-			<div
-				role="button"
-				tabindex="0"
+			<button
+				type="button"
+				aria-label={m.close()}
 				class="flex items-center hover:text-primary-500 cursor-pointer"
 				onclick={parent.onClose}
-				onkeydown={parent.onClose}
 			>
 				<i class="fa-solid fa-xmark"></i>
-			</div>
+			</button>
 		</div>
 		<div class="flex flex-col space-y-3">
 			<AutocompleteSelect

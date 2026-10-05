@@ -22,7 +22,6 @@ def node_with_questions(db):
     fw = Framework.objects.create(
         name="Test Framework",
         folder=folder,
-        is_published=True,
     )
     rn = RequirementNode.objects.create(
         framework=fw,
@@ -30,7 +29,6 @@ def node_with_questions(db):
         ref_id="DICT-REQ",
         assessable=True,
         folder=folder,
-        is_published=True,
     )
 
     # Single-choice question
@@ -42,7 +40,6 @@ def node_with_questions(db):
         type=Question.Type.UNIQUE_CHOICE,
         order=0,
         folder=folder,
-        is_published=True,
     )
     c_sc_1 = QuestionChoice.objects.create(
         question=q_sc,
@@ -56,7 +53,6 @@ def node_with_questions(db):
         color="#FF0000",
         select_implementation_groups=["basic"],
         folder=folder,
-        is_published=True,
     )
     c_sc_2 = QuestionChoice.objects.create(
         question=q_sc,
@@ -67,7 +63,6 @@ def node_with_questions(db):
         compute_result="false",
         order=1,
         folder=folder,
-        is_published=True,
     )
 
     # Multiple-choice question
@@ -79,7 +74,6 @@ def node_with_questions(db):
         type=Question.Type.MULTIPLE_CHOICE,
         order=1,
         folder=folder,
-        is_published=True,
     )
     c_mc_1 = QuestionChoice.objects.create(
         question=q_mc,
@@ -90,7 +84,6 @@ def node_with_questions(db):
         compute_result="true",
         order=0,
         folder=folder,
-        is_published=True,
     )
     c_mc_2 = QuestionChoice.objects.create(
         question=q_mc,
@@ -101,7 +94,6 @@ def node_with_questions(db):
         compute_result="true",
         order=1,
         folder=folder,
-        is_published=True,
     )
 
     # Text question
@@ -113,7 +105,6 @@ def node_with_questions(db):
         type=Question.Type.TEXT,
         order=2,
         folder=folder,
-        is_published=True,
     )
 
     # Question with depends_on
@@ -130,7 +121,6 @@ def node_with_questions(db):
             "condition": "any",
         },
         folder=folder,
-        is_published=True,
     )
     c_dep_1 = QuestionChoice.objects.create(
         question=q_dep,
@@ -141,7 +131,6 @@ def node_with_questions(db):
         compute_result="true",
         order=0,
         folder=folder,
-        is_published=True,
     )
     QuestionChoice.objects.create(
         question=q_dep,
@@ -152,7 +141,6 @@ def node_with_questions(db):
         compute_result="false",
         order=1,
         folder=folder,
-        is_published=True,
     )
 
     perimeter = Perimeter.objects.create(name="Dict Perim", folder=folder)
@@ -161,7 +149,6 @@ def node_with_questions(db):
         framework=fw,
         folder=folder,
         perimeter=perimeter,
-        is_published=True,
     )
     ra = RequirementAssessment.objects.create(
         compliance_assessment=ca,
@@ -245,7 +232,6 @@ class TestBuildQuestionsDict:
         fw = Framework.objects.create(
             name="Empty Q FW",
             folder=folder,
-            is_published=True,
         )
         rn = RequirementNode.objects.create(
             framework=fw,
@@ -253,20 +239,20 @@ class TestBuildQuestionsDict:
             ref_id="NOQ-REQ",
             assessable=True,
             folder=folder,
-            is_published=True,
         )
         result = build_questions_dict(rn)
         assert result is None
 
-    def test_compute_result_boolean_conversion(self, node_with_questions):
+    def test_compute_result_semantic_resolution(self, node_with_questions):
+        """Legacy 'true' / 'false' choices are exported as the resolved semantic values."""
         d = node_with_questions
         result = build_questions_dict(d["rn"])
 
         sc_choices = result["urn:test:qsc"]["choices"]
-        # compute_result="true" -> True
-        assert sc_choices[0]["compute_result"] is True
-        # compute_result="false" -> False
-        assert sc_choices[1]["compute_result"] is False
+        # compute_result="true" -> "compliant"
+        assert sc_choices[0]["compute_result"] == "compliant"
+        # compute_result="false" -> "non_compliant"
+        assert sc_choices[1]["compute_result"] == "non_compliant"
 
 
 @pytest.mark.django_db

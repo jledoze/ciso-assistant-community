@@ -37,13 +37,17 @@
 <div class="flex items-center justify-between p-2 mb-2">
 	<h2 class="text-xl font-semibold">{m.myAssignments()}</h2>
 	<div class="flex gap-2">
-		<button type="button" class="btn btn-sm variant-ghost-surface" onclick={toggleTeamAssignments}>
+		<button
+			type="button"
+			class="btn btn-sm preset-outlined-surface-500"
+			onclick={toggleTeamAssignments}
+		>
 			<i class="fa-solid {data.includeTeams ? 'fa-user' : 'fa-users'} mr-2"></i>
 			{data.includeTeams ? m.directAssignmentsOnly() : m.includeTeamAssignments()}
 		</button>
 		<button
 			type="button"
-			class="btn btn-sm variant-ghost-surface"
+			class="btn btn-sm preset-outlined-surface-500"
 			onclick={() => (showEmptySections = !showEmptySections)}
 		>
 			<i class="fa-solid {showEmptySections ? 'fa-eye-slash' : 'fa-eye'} mr-2"></i>
@@ -58,11 +62,13 @@
 	</div>
 {:then counts}
 	<div class="grid grid-cols-12 gap-4 p-2">
-		<div class="col-span-7 bg-linear-to-br from-pink-200 to-pink-50 p-2 rounded">
+		<div
+			class="col-span-7 bg-linear-to-br from-pink-200 to-pink-50 dark:from-pink-900/80 dark:to-pink-900/10 p-2 rounded"
+		>
 			<div class="font-bold mb-2">
 				<i class="fa-solid fa-fire-extinguisher mr-2"></i>{m.appliedControls()}
 				{#if counts.appliedControls > 0}
-					<span class="badge variant-filled-surface ml-2">{counts.appliedControls}</span>
+					<span class="badge preset-tonal-surface ml-2">{counts.appliedControls}</span>
 				{/if}
 			</div>
 			<ModelTable
@@ -86,11 +92,13 @@
 			<ActivityTracker metrics={data.data.metrics} />
 		</div>
 		{#if showEmptySections || counts.tasks > 0}
-			<div class="col-span-6 bg-linear-to-br from-violet-200 to-violet-50 p-2 rounded">
+			<div
+				class="col-span-6 bg-linear-to-br from-violet-200 to-violet-50 dark:from-violet-900/40 dark:to-violet-900/10 p-2 rounded"
+			>
 				<div class="font-bold mb-2">
 					<i class="fa-solid fa-note-sticky mr-2"></i>{m.tasks()}
 					{#if counts.tasks > 0}
-						<span class="badge variant-filled-surface ml-2">{counts.tasks}</span>
+						<span class="badge preset-tonal-surface ml-2">{counts.tasks}</span>
 					{/if}
 				</div>
 				<ModelTable
@@ -110,11 +118,13 @@
 			</div>
 		{/if}
 		{#if showEmptySections || counts.complianceAssessments > 0}
-			<div class="col-span-6 bg-linear-to-br from-blue-200 to-blue-50 p-2 rounded">
+			<div
+				class="col-span-6 bg-linear-to-br from-blue-200 to-blue-50 dark:from-blue-900/40 dark:to-blue-900/10 p-2 rounded"
+			>
 				<div class="font-bold mb-2">
 					<i class="fa-solid fa-certificate mr-2"></i>{m.complianceAssessments()}
 					{#if counts.complianceAssessments > 0}
-						<span class="badge variant-filled-surface ml-2">{counts.complianceAssessments}</span>
+						<span class="badge preset-tonal-surface ml-2">{counts.complianceAssessments}</span>
 					{/if}
 				</div>
 				<ModelTable
@@ -135,11 +145,13 @@
 			</div>
 		{/if}
 		{#if showEmptySections || counts.riskAssessments > 0}
-			<div class="col-span-6 bg-linear-to-br from-blue-200 to-blue-50 p-2 rounded">
+			<div
+				class="col-span-6 bg-linear-to-br from-blue-200 to-blue-50 dark:from-blue-900/40 dark:to-blue-900/10 p-2 rounded"
+			>
 				<div class="font-bold mb-2">
 					<i class="fa-solid fa-magnifying-glass-chart mr-2"></i>{m.riskAssessments()}
 					{#if counts.riskAssessments > 0}
-						<span class="badge variant-filled-surface ml-2">{counts.riskAssessments}</span>
+						<span class="badge preset-tonal-surface ml-2">{counts.riskAssessments}</span>
 					{/if}
 				</div>
 				<ModelTable
@@ -159,11 +171,13 @@
 			</div>
 		{/if}
 		{#if showEmptySections || counts.riskScenarios > 0}
-			<div class="col-span-6 bg-linear-to-br from-violet-200 to-violet-50 p-2 rounded">
+			<div
+				class="col-span-6 bg-linear-to-br from-violet-200 to-violet-50 dark:from-violet-900/40 dark:to-violet-900/10 p-2 rounded"
+			>
 				<div class="font-bold mb-2">
 					<i class="fa-solid fa-clone mr-2"></i>{m.riskScenarios()}
 					{#if counts.riskScenarios > 0}
-						<span class="badge variant-filled-surface ml-2">{counts.riskScenarios}</span>
+						<span class="badge preset-tonal-surface ml-2">{counts.riskScenarios}</span>
 					{/if}
 				</div>
 				<ModelTable
@@ -184,11 +198,13 @@
 			</div>
 		{/if}
 		{#if showEmptySections || counts.incidents > 0}
-			<div class="col-span-6 bg-linear-to-br from-violet-200 to-violet-50 p-2 rounded">
+			<div
+				class="col-span-6 bg-linear-to-br from-violet-200 to-violet-50 dark:from-violet-900/40 dark:to-violet-900/10 p-2 rounded"
+			>
 				<div class="font-bold mb-2">
 					<i class="fa-solid fa-bug mr-2"></i>{m.incidents()}
 					{#if counts.incidents > 0}
-						<span class="badge variant-filled-surface ml-2">{counts.incidents}</span>
+						<span class="badge preset-tonal-surface ml-2">{counts.incidents}</span>
 					{/if}
 				</div>
 				<ModelTable
@@ -209,11 +225,13 @@
 			</div>
 		{/if}
 		{#if showEmptySections || counts.securityExceptions > 0}
-			<div class="col-span-6 bg-linear-to-br from-blue-200 to-blue-50 p-2 rounded">
+			<div
+				class="col-span-6 bg-linear-to-br from-blue-200 to-blue-50 dark:from-blue-900/40 dark:to-blue-900/10 p-2 rounded"
+			>
 				<div class="font-bold mb-2">
 					<i class="fa-solid fa-circle-exclamation mr-2"></i>{m.securityExceptions()}
 					{#if counts.securityExceptions > 0}
-						<span class="badge variant-filled-surface ml-2">{counts.securityExceptions}</span>
+						<span class="badge preset-tonal-surface ml-2">{counts.securityExceptions}</span>
 					{/if}
 				</div>
 				<ModelTable
@@ -234,11 +252,13 @@
 			</div>
 		{/if}
 		{#if showEmptySections || counts.findingsAssessments > 0}
-			<div class="col-span-6 bg-linear-to-br from-blue-200 to-blue-50 p-2 rounded">
+			<div
+				class="col-span-6 bg-linear-to-br from-blue-200 to-blue-50 dark:from-blue-900/40 dark:to-blue-900/10 p-2 rounded"
+			>
 				<div class="font-bold mb-2">
 					<i class="fa-solid fa-clipboard-list mr-2"></i>{m.findingsAssessments()}
 					{#if counts.findingsAssessments > 0}
-						<span class="badge variant-filled-surface ml-2">{counts.findingsAssessments}</span>
+						<span class="badge preset-tonal-surface ml-2">{counts.findingsAssessments}</span>
 					{/if}
 				</div>
 				<ModelTable
@@ -258,11 +278,13 @@
 			</div>
 		{/if}
 		{#if (showEmptySections || counts.validationFlows > 0) && data.featureflags?.validation_flows}
-			<div class="col-span-6 bg-linear-to-br from-orange-200 to-orange-50 p-2 rounded">
+			<div
+				class="col-span-6 bg-linear-to-br from-orange-200 to-orange-50 dark:from-orange-900/40 dark:to-orange-900/10 p-2 rounded"
+			>
 				<div class="font-bold mb-2">
 					<i class="fa-solid fa-check-circle mr-2"></i>{m.validationFlows()}
 					{#if counts.validationFlows > 0}
-						<span class="badge variant-filled-surface ml-2">{counts.validationFlows}</span>
+						<span class="badge preset-tonal-surface ml-2">{counts.validationFlows}</span>
 					{/if}
 				</div>
 				<ModelTable
@@ -278,16 +300,43 @@
 					}}
 					hideFilters={true}
 					URLModel="validation-flows"
-					baseEndpoint="/validation-flows?approver={data.user.id}"
+					baseEndpoint="/validation-flows?approver={data.user?.id}"
+				/>
+			</div>
+		{/if}
+		{#if showEmptySections || counts.riskAcceptances > 0}
+			<div
+				class="col-span-6 bg-linear-to-br from-yellow-200 to-yellow-50 dark:from-yellow-900/40 dark:to-yellow-900/10 p-2 rounded"
+			>
+				<div class="font-bold mb-2">
+					<i class="fa-solid fa-signature mr-2"></i>{m.riskAcceptances()}
+					{#if counts.riskAcceptances > 0}
+						<span class="badge preset-tonal-surface ml-2">{counts.riskAcceptances}</span>
+					{/if}
+				</div>
+				<ModelTable
+					source={{
+						head: {
+							name: 'name',
+							expiry_date: 'expiry_date',
+							folder: 'folder'
+						},
+						body: []
+					}}
+					hideFilters={true}
+					URLModel="risk-acceptances"
+					baseEndpoint="/risk-acceptances?approver={data.user?.id}&state=submitted"
 				/>
 			</div>
 		{/if}
 		{#if showEmptySections || counts.findings > 0}
-			<div class="col-span-6 bg-linear-to-br from-violet-200 to-violet-50 p-2 rounded">
+			<div
+				class="col-span-6 bg-linear-to-br from-violet-200 to-violet-50 dark:from-violet-900/40 dark:to-violet-900/10 p-2 rounded"
+			>
 				<div class="font-bold mb-2">
 					<i class="fa-solid fa-triangle-exclamation mr-2"></i>{m.findings()}
 					{#if counts.findings > 0}
-						<span class="badge variant-filled-surface ml-2">{counts.findings}</span>
+						<span class="badge preset-tonal-surface ml-2">{counts.findings}</span>
 					{/if}
 				</div>
 				<ModelTable
@@ -307,11 +356,13 @@
 			</div>
 		{/if}
 		{#if showEmptySections || counts.organisationObjectives > 0}
-			<div class="col-span-6 bg-linear-to-br from-green-200 to-green-50 p-2 rounded">
+			<div
+				class="col-span-6 bg-linear-to-br from-green-200 to-green-50 dark:from-green-900/40 dark:to-green-900/10 p-2 rounded"
+			>
 				<div class="font-bold mb-2">
 					<i class="fa-solid fa-bullseye mr-2"></i>{m.organisationObjectives()}
 					{#if counts.organisationObjectives > 0}
-						<span class="badge variant-filled-surface ml-2">{counts.organisationObjectives}</span>
+						<span class="badge preset-tonal-surface ml-2">{counts.organisationObjectives}</span>
 					{/if}
 				</div>
 				<ModelTable
@@ -332,11 +383,13 @@
 			</div>
 		{/if}
 		{#if showEmptySections || counts.rightRequests > 0}
-			<div class="col-span-6 bg-linear-to-br from-orange-200 to-orange-50 p-2 rounded">
+			<div
+				class="col-span-6 bg-linear-to-br from-orange-200 to-orange-50 dark:from-orange-900/40 dark:to-orange-900/10 p-2 rounded"
+			>
 				<div class="font-bold mb-2">
 					<i class="fa-solid fa-user-shield mr-2"></i>{m.rightRequests()}
 					{#if counts.rightRequests > 0}
-						<span class="badge variant-filled-surface ml-2">{counts.rightRequests}</span>
+						<span class="badge preset-tonal-surface ml-2">{counts.rightRequests}</span>
 					{/if}
 				</div>
 				<ModelTable
@@ -357,11 +410,13 @@
 			</div>
 		{/if}
 		{#if showEmptySections || counts.metricInstances > 0}
-			<div class="col-span-6 bg-linear-to-br from-teal-200 to-teal-50 p-2 rounded">
+			<div
+				class="col-span-6 bg-linear-to-br from-teal-200 to-teal-50 dark:from-teal-900/40 dark:to-teal-900/10 p-2 rounded"
+			>
 				<div class="font-bold mb-2">
 					<i class="fa-solid fa-chart-line mr-2"></i>{m.metricInstances()}
 					{#if counts.metricInstances > 0}
-						<span class="badge variant-filled-surface ml-2">{counts.metricInstances}</span>
+						<span class="badge preset-tonal-surface ml-2">{counts.metricInstances}</span>
 					{/if}
 				</div>
 				<ModelTable

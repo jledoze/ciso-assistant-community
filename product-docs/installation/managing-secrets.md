@@ -103,7 +103,7 @@ services:
       - /bin/sh
       - -c
       - |
-        poetry run python manage.py run_huey -w 2 --scheduler-interval 60
+        uv run python manage.py run_huey -w 2 --scheduler-interval 60
 
   frontend:
     container_name: frontend
@@ -130,7 +130,7 @@ services:
 
   caddy:
     container_name: caddy
-    image: caddy:2.10.0
+    image: caddy:2.11.4
     restart: unless-stopped
     ports:
       - 8443:8443

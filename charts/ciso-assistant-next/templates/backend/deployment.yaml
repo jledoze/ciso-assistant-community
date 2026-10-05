@@ -18,6 +18,9 @@ spec:
     metadata:
       annotations:
         checksum/secret-backend: {{ include (print $.Template.BasePath "/backend/secret.yaml") . | sha256sum }}
+        {{- with .Values.backend.config.oidcProvider.privateKey }}
+        checksum/oidc-private-key: {{ . | sha256sum }}
+        {{- end }}
         {{- with .Values.backend.podAnnotations }}
           {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -35,10 +38,26 @@ spec:
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.global.extraCerts.enabled }}
+      initContainers:
+        {{- include "ciso-assistant.extraCerts.initContainer" (dict
+            "context" .
+            "image" (printf "%s/%s:%s" (default .Values.global.image.registry .Values.backend.image.registry) .Values.backend.image.repository (default (include "ciso-assistant.defaultTag" .) .Values.backend.image.tag))
+            "imagePullPolicy" (default .Values.global.image.imagePullPolicy .Values.backend.image.imagePullPolicy)
+            "securityContext" .Values.backend.containerSecurityContext) | nindent 8 }}
+      {{- end }}
       containers:
       - name: {{ .Values.backend.name }}
         image: {{ default .Values.global.image.registry .Values.backend.image.registry }}/{{ .Values.backend.image.repository }}:{{ default (include "ciso-assistant.defaultTag" .) .Values.backend.image.tag }}
         imagePullPolicy: {{ default .Values.global.image.imagePullPolicy .Values.backend.image.imagePullPolicy }}
+        {{- with .Values.backend.command }}
+        command:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.backend.args }}
+        args:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         env:
           {{- with .Values.backend.env }}
             {{- toYaml . | nindent 10 }}
@@ -100,6 +119,13 @@ spec:
                 name: {{ include "ciso-assistant.fullname" . }}-backend
                 {{- end }}
                 key: django-secret-key
+          {{- if not (include "ciso-assistant.definesEnv" (dict "env" .Values.backend.env "names" (list "IDP_OIDC_PRIVATE_KEY" "IDP_OIDC_PRIVATE_KEY_FILE"))) }}
+          - name: IDP_OIDC_PRIVATE_KEY
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "ciso-assistant.idpOidcSecretName" . }}
+                key: idp-oidc-private-key
+          {{- end }}
           - name: CISO_ASSISTANT_SUPERUSER_EMAIL
             value: {{ .Values.backend.config.emailAdmin }}
           - name: CISO_ASSISTANT_URL
@@ -136,6 +162,15 @@ spec:
                 name: {{ include "ciso-assistant.fullname" . }}-backend
                 key: email-primary-password
           {{- end }}
+          {{- if .Values.backend.config.chat.enabled }}
+          - name: ENABLE_CHAT
+            value: "True"
+          {{- end }}
+          {{- if .Values.qdrant.enabled }}
+          - name: QDRANT_URL
+            value: {{ include "ciso-assistant.qdrantUrl" . }}
+          {{- end }}
+          {{- include "ciso-assistant.extraCerts.pythonEnv" . | nindent 10 }}
         ports:
           - name: http
             containerPort: 8000
@@ -154,6 +189,7 @@ spec:
           {{- if and .Values.backend.extraVolumeMounts (not .Values.backend.extraVolumes) }}
             {{- fail "backend.extraVolumeMounts can't be set without backend.extraVolumes" }}
           {{- end }}
+          {{- include "ciso-assistant.extraCerts.backendVolumeMount" . | nindent 10 }}
           {{- with .Values.backend.extraVolumeMounts }}
             {{- toYaml . | nindent 10 }}
           {{- end }}
@@ -168,8 +204,14 @@ spec:
       - name: {{ .Values.backend.huey.name }}
         image: {{ default .Values.global.image.registry .Values.backend.image.registry }}/{{ .Values.backend.image.repository }}:{{ default (include "ciso-assistant.defaultTag" .) .Values.backend.image.tag }}
         imagePullPolicy: {{ default .Values.global.image.imagePullPolicy .Values.backend.image.imagePullPolicy }}
-        command: ["/bin/sh"]
-        args: ["-c", "poetry run python manage.py run_huey -w 2 --scheduler-interval 60"]
+        {{- with .Values.backend.huey.command }}
+        command:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.backend.huey.args }}
+        args:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         env:
           {{- with .Values.backend.huey.env }}
             {{- toYaml . | nindent 10 }}
@@ -189,6 +231,10 @@ spec:
           {{- else }}
           - name: HUEY_FILE_PATH
             value: /tmp/huey.db
+          {{- end }}
+          {{- if .Values.backend.persistence.localStorage.enabled }}
+          - name: LOCAL_STORAGE_DIRECTORY
+            value: /ciso/localStorage
           {{- end }}
           {{- if eq .Values.backend.config.databaseType "pgsql" }}
           - name: DB_HOST
@@ -235,6 +281,13 @@ spec:
                 name: {{ include "ciso-assistant.fullname" . }}-backend
                 {{- end }}
                 key: django-secret-key
+          {{- if not (include "ciso-assistant.definesEnv" (dict "env" .Values.backend.huey.env "names" (list "IDP_OIDC_PRIVATE_KEY" "IDP_OIDC_PRIVATE_KEY_FILE"))) }}
+          - name: IDP_OIDC_PRIVATE_KEY
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "ciso-assistant.idpOidcSecretName" . }}
+                key: idp-oidc-private-key
+          {{- end }}
           - name: CISO_ASSISTANT_SUPERUSER_EMAIL
             value: {{ .Values.backend.config.emailAdmin }}
           - name: CISO_ASSISTANT_URL
@@ -271,6 +324,15 @@ spec:
                 name: {{ include "ciso-assistant.fullname" . }}-backend
                 key: email-primary-password
           {{- end }}
+          {{- if .Values.backend.config.chat.enabled }}
+          - name: ENABLE_CHAT
+            value: "True"
+          {{- end }}
+          {{- if .Values.qdrant.enabled }}
+          - name: QDRANT_URL
+            value: {{ include "ciso-assistant.qdrantUrl" . }}
+          {{- end }}
+          {{- include "ciso-assistant.extraCerts.pythonEnv" . | nindent 10 }}
         volumeMounts:
           - name: tmp-data
             mountPath: /tmp
@@ -278,9 +340,14 @@ spec:
           - name: sqlite-data
             mountPath: /ciso/db
           {{- end }}
+          {{- if .Values.backend.persistence.localStorage.enabled }}
+          - name: localstorage-data
+            mountPath: /ciso/localStorage
+          {{- end }}
           {{- if and .Values.backend.huey.extraVolumeMounts (not .Values.backend.extraVolumes) }}
             {{- fail "backend.huey.extraVolumeMounts can't be set without backend.extraVolumes" }}
           {{- end }}
+          {{- include "ciso-assistant.extraCerts.backendVolumeMount" . | nindent 10 }}
           {{- with .Values.backend.huey.extraVolumeMounts }}
             {{- toYaml . | nindent 10 }}
           {{- end }}
@@ -326,6 +393,7 @@ spec:
             claimName: {{ include "ciso-assistant.fullname" . }}-localstorage
             {{- end }}
         {{- end }}
+        {{- include "ciso-assistant.extraCerts.backendVolumes" . | nindent 8 }}
         {{- with .Values.backend.extraVolumes }}
           {{- toYaml . | nindent 8 }}
         {{- end }}

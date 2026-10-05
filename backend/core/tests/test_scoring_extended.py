@@ -21,7 +21,6 @@ def scoring_setup(db):
     fw = Framework.objects.create(
         name="Extended Scoring FW",
         folder=folder,
-        is_published=True,
         min_score=0,
         max_score=100,
     )
@@ -31,7 +30,6 @@ def scoring_setup(db):
         ref_id="EXT-REQ",
         assessable=True,
         folder=folder,
-        is_published=True,
     )
     # Q1: single choice
     q1 = Question.objects.create(
@@ -43,7 +41,6 @@ def scoring_setup(db):
         order=0,
         weight=1,
         folder=folder,
-        is_published=True,
     )
     q1_good = QuestionChoice.objects.create(
         question=q1,
@@ -54,7 +51,6 @@ def scoring_setup(db):
         compute_result="true",
         order=0,
         folder=folder,
-        is_published=True,
     )
     q1_bad = QuestionChoice.objects.create(
         question=q1,
@@ -65,7 +61,6 @@ def scoring_setup(db):
         compute_result="false",
         order=1,
         folder=folder,
-        is_published=True,
     )
 
     # Q2: single choice
@@ -78,7 +73,6 @@ def scoring_setup(db):
         order=1,
         weight=1,
         folder=folder,
-        is_published=True,
     )
     q2_good = QuestionChoice.objects.create(
         question=q2,
@@ -89,7 +83,6 @@ def scoring_setup(db):
         compute_result="true",
         order=0,
         folder=folder,
-        is_published=True,
     )
     q2_bad = QuestionChoice.objects.create(
         question=q2,
@@ -100,7 +93,6 @@ def scoring_setup(db):
         compute_result="false",
         order=1,
         folder=folder,
-        is_published=True,
     )
 
     perimeter = Perimeter.objects.create(name="Ext Perim", folder=folder)
@@ -109,7 +101,6 @@ def scoring_setup(db):
         framework=fw,
         folder=folder,
         perimeter=perimeter,
-        is_published=True,
         min_score=0,
         max_score=100,
     )
@@ -206,7 +197,6 @@ class TestScoringExtended:
         fw = Framework.objects.create(
             name="Clamp FW",
             folder=folder,
-            is_published=True,
             min_score=0,
             max_score=50,
         )
@@ -216,7 +206,6 @@ class TestScoringExtended:
             ref_id="CL-REQ",
             assessable=True,
             folder=folder,
-            is_published=True,
         )
         q = Question.objects.create(
             requirement_node=rn,
@@ -226,7 +215,6 @@ class TestScoringExtended:
             order=0,
             weight=1,
             folder=folder,
-            is_published=True,
         )
         c_high = QuestionChoice.objects.create(
             question=q,
@@ -237,7 +225,6 @@ class TestScoringExtended:
             compute_result="true",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q,
@@ -246,7 +233,6 @@ class TestScoringExtended:
             value="Placeholder",
             order=1,
             folder=folder,
-            is_published=True,
         )
 
         perimeter = Perimeter.objects.create(name="Clamp Perim", folder=folder)
@@ -255,7 +241,6 @@ class TestScoringExtended:
             framework=fw,
             folder=folder,
             perimeter=perimeter,
-            is_published=True,
             min_score=0,
             max_score=50,
         )
@@ -301,7 +286,9 @@ class TestScoringExtended:
         )
         a2.selected_choices.set([d["q2_good"]])
 
-        # Set a non-default result to prove compute_score_and_result persists
+        # Set a non-default result to prove compute_score_and_result leaves the
+        # manual result alone when the requirement is not compute_result-driven
+        # (no choice has a resolvable compute_result).
         d["ra"].result = "compliant"
         d["ra"].is_scored = True
         d["ra"].save(update_fields=["result", "is_scored"])
@@ -309,8 +296,10 @@ class TestScoringExtended:
         d["ra"].compute_score_and_result()
         d["ra"].refresh_from_db()
 
-        # No crash; results list empty -> not_assessed is persisted
-        assert d["ra"].result == "not_assessed"
+        # No crash; the requirement isn't result-driven, so the auditor-set
+        # result is preserved. Score is still recomputed (and falls back to
+        # None / is_scored=False since no choice carries add_score either).
+        assert d["ra"].result == "compliant"
         assert d["ra"].is_scored is False
         assert d["ra"].score is None
 
@@ -364,13 +353,464 @@ class TestScoringExtended:
 
 
 @pytest.mark.django_db
+class TestSemanticComputeResult:
+    """Aggregation of semantic compute_result values and legacy true/false literals."""
+
+    def _build_two_question_ra(
+        self, folder, q1_choices, q2_choices, q1_type=None, q2_type=None
+    ):
+        """Build a framework with two questions and the supplied choice specs.
+
+        Each entry of q1_choices/q2_choices is a dict with keys: ref_id, value,
+        compute_result (str | None), add_score (int | None).
+        """
+        from core.models import (
+            ComplianceAssessment,
+            Framework,
+            Perimeter,
+            Question,
+            QuestionChoice,
+            RequirementAssessment,
+            RequirementNode,
+        )
+
+        suffix = f"{id(q1_choices)}-{id(q2_choices)}"
+        fw = Framework.objects.create(
+            name=f"Sem FW {suffix}",
+            folder=folder,
+            min_score=0,
+            max_score=100,
+        )
+        rn = RequirementNode.objects.create(
+            framework=fw,
+            urn=f"urn:test:sem:{suffix}:req:001",
+            ref_id="SEM-REQ",
+            assessable=True,
+            folder=folder,
+        )
+
+        def _make_question(idx, q_type, choices_spec):
+            q = Question.objects.create(
+                requirement_node=rn,
+                urn=f"urn:test:sem:{suffix}:q{idx}",
+                ref_id=f"SQ{idx}",
+                type=q_type or Question.Type.UNIQUE_CHOICE,
+                order=idx,
+                weight=1,
+                folder=folder,
+            )
+            created = []
+            for i, spec in enumerate(choices_spec):
+                created.append(
+                    QuestionChoice.objects.create(
+                        question=q,
+                        urn=f"urn:test:sem:{suffix}:q{idx}:c{i}",
+                        ref_id=spec["ref_id"],
+                        value=spec["value"],
+                        add_score=spec.get("add_score"),
+                        compute_result=spec.get("compute_result"),
+                        order=i,
+                        folder=folder,
+                    )
+                )
+            return q, created
+
+        q1, q1_choice_objs = _make_question(1, q1_type, q1_choices)
+        q2, q2_choice_objs = _make_question(2, q2_type, q2_choices)
+
+        perimeter = Perimeter.objects.create(name=f"Sem Perim {suffix}", folder=folder)
+        ca = ComplianceAssessment.objects.create(
+            name=f"Sem CA {suffix}",
+            framework=fw,
+            folder=folder,
+            perimeter=perimeter,
+            min_score=0,
+            max_score=100,
+        )
+        ra = RequirementAssessment.objects.create(
+            compliance_assessment=ca, requirement=rn, folder=folder
+        )
+        return ra, q1, q1_choice_objs, q2, q2_choice_objs
+
+    def test_non_compliant_choice_yields_non_compliant_result(self, db):
+        """A 'non_compliant' choice on every question -> requirement is non_compliant."""
+        folder = Folder.get_root_folder()
+        ra, q1, q1_choices, q2, q2_choices = self._build_two_question_ra(
+            folder,
+            q1_choices=[
+                {
+                    "ref_id": "A",
+                    "value": "Non-compliant",
+                    "compute_result": "non_compliant",
+                },
+                {"ref_id": "B", "value": "Compliant", "compute_result": "compliant"},
+            ],
+            q2_choices=[
+                {
+                    "ref_id": "C",
+                    "value": "Non-compliant",
+                    "compute_result": "non_compliant",
+                },
+                {"ref_id": "D", "value": "Compliant", "compute_result": "compliant"},
+            ],
+        )
+
+        a1 = Answer.objects.create(
+            requirement_assessment=ra, question=q1, folder=folder
+        )
+        a1.selected_choices.set([q1_choices[0]])  # non_compliant
+        a2 = Answer.objects.create(
+            requirement_assessment=ra, question=q2, folder=folder
+        )
+        a2.selected_choices.set([q2_choices[0]])  # non_compliant
+
+        ra.compute_score_and_result()
+        ra.refresh_from_db()
+
+        assert ra.result == "non_compliant"
+
+    def test_all_compliant_choices_yield_compliant(self, db):
+        folder = Folder.get_root_folder()
+        ra, q1, q1_choices, q2, q2_choices = self._build_two_question_ra(
+            folder,
+            q1_choices=[
+                {"ref_id": "A", "value": "OK", "compute_result": "compliant"},
+                {"ref_id": "B", "value": "KO", "compute_result": "non_compliant"},
+            ],
+            q2_choices=[
+                {"ref_id": "C", "value": "OK", "compute_result": "compliant"},
+                {"ref_id": "D", "value": "KO", "compute_result": "non_compliant"},
+            ],
+        )
+        a1 = Answer.objects.create(
+            requirement_assessment=ra, question=q1, folder=folder
+        )
+        a1.selected_choices.set([q1_choices[0]])
+        a2 = Answer.objects.create(
+            requirement_assessment=ra, question=q2, folder=folder
+        )
+        a2.selected_choices.set([q2_choices[0]])
+
+        ra.compute_score_and_result()
+        ra.refresh_from_db()
+        assert ra.result == "compliant"
+
+    def test_mixed_compliant_and_non_compliant_yields_partial(self, db):
+        folder = Folder.get_root_folder()
+        ra, q1, q1_choices, q2, q2_choices = self._build_two_question_ra(
+            folder,
+            q1_choices=[
+                {"ref_id": "A", "value": "OK", "compute_result": "compliant"},
+                {"ref_id": "B", "value": "KO", "compute_result": "non_compliant"},
+            ],
+            q2_choices=[
+                {"ref_id": "C", "value": "OK", "compute_result": "compliant"},
+                {"ref_id": "D", "value": "KO", "compute_result": "non_compliant"},
+            ],
+        )
+        a1 = Answer.objects.create(
+            requirement_assessment=ra, question=q1, folder=folder
+        )
+        a1.selected_choices.set([q1_choices[0]])  # compliant
+        a2 = Answer.objects.create(
+            requirement_assessment=ra, question=q2, folder=folder
+        )
+        a2.selected_choices.set([q2_choices[1]])  # non_compliant
+
+        ra.compute_score_and_result()
+        ra.refresh_from_db()
+        assert ra.result == "partially_compliant"
+
+    def test_partially_compliant_choice_yields_partial(self, db):
+        """A single 'partially_compliant' choice on its own propagates to the requirement."""
+        folder = Folder.get_root_folder()
+        ra, q1, q1_choices, q2, q2_choices = self._build_two_question_ra(
+            folder,
+            q1_choices=[
+                {
+                    "ref_id": "A",
+                    "value": "Mid",
+                    "compute_result": "partially_compliant",
+                },
+            ],
+            q2_choices=[
+                {"ref_id": "B", "value": "OK", "compute_result": "compliant"},
+            ],
+        )
+        a1 = Answer.objects.create(
+            requirement_assessment=ra, question=q1, folder=folder
+        )
+        a1.selected_choices.set([q1_choices[0]])
+        a2 = Answer.objects.create(
+            requirement_assessment=ra, question=q2, folder=folder
+        )
+        a2.selected_choices.set([q2_choices[0]])
+
+        ra.compute_score_and_result()
+        ra.refresh_from_db()
+        assert ra.result == "partially_compliant"
+
+    def test_not_applicable_choice_is_neutral_in_mix(self, db):
+        """A 'not_applicable' choice is dropped from the pool; other contributions decide."""
+        folder = Folder.get_root_folder()
+        ra, q1, q1_choices, q2, q2_choices = self._build_two_question_ra(
+            folder,
+            q1_choices=[
+                {"ref_id": "A", "value": "N/A", "compute_result": "not_applicable"},
+            ],
+            q2_choices=[
+                {"ref_id": "B", "value": "KO", "compute_result": "non_compliant"},
+            ],
+        )
+        a1 = Answer.objects.create(
+            requirement_assessment=ra, question=q1, folder=folder
+        )
+        a1.selected_choices.set([q1_choices[0]])
+        a2 = Answer.objects.create(
+            requirement_assessment=ra, question=q2, folder=folder
+        )
+        a2.selected_choices.set([q2_choices[0]])
+
+        ra.compute_score_and_result()
+        ra.refresh_from_db()
+        assert ra.result == "non_compliant"
+
+    def test_null_compute_result_stays_neutral(self, db):
+        """A choice with compute_result=None does not contribute to the result."""
+        folder = Folder.get_root_folder()
+        ra, q1, q1_choices, q2, q2_choices = self._build_two_question_ra(
+            folder,
+            q1_choices=[
+                {"ref_id": "A", "value": "Neutral", "compute_result": None},
+            ],
+            q2_choices=[
+                {"ref_id": "B", "value": "OK", "compute_result": "compliant"},
+            ],
+        )
+        a1 = Answer.objects.create(
+            requirement_assessment=ra, question=q1, folder=folder
+        )
+        a1.selected_choices.set([q1_choices[0]])
+        a2 = Answer.objects.create(
+            requirement_assessment=ra, question=q2, folder=folder
+        )
+        a2.selected_choices.set([q2_choices[0]])
+
+        ra.compute_score_and_result()
+        ra.refresh_from_db()
+        # Null compute_result is neutral (not a veto) -> overall result follows q2
+        assert ra.result == "compliant"
+
+    def test_all_not_applicable_yields_not_applicable(self, db):
+        folder = Folder.get_root_folder()
+        ra, q1, q1_choices, q2, q2_choices = self._build_two_question_ra(
+            folder,
+            q1_choices=[
+                {"ref_id": "A", "value": "N/A", "compute_result": "not_applicable"},
+            ],
+            q2_choices=[
+                {"ref_id": "B", "value": "N/A", "compute_result": "not_applicable"},
+            ],
+        )
+        a1 = Answer.objects.create(
+            requirement_assessment=ra, question=q1, folder=folder
+        )
+        a1.selected_choices.set([q1_choices[0]])
+        a2 = Answer.objects.create(
+            requirement_assessment=ra, question=q2, folder=folder
+        )
+        a2.selected_choices.set([q2_choices[0]])
+
+        ra.compute_score_and_result()
+        ra.refresh_from_db()
+        assert ra.result == "not_applicable"
+
+    def test_multiple_choice_one_to_one_mapping(self, db):
+        """Each ticked choice on a multi-choice question contributes one result."""
+        folder = Folder.get_root_folder()
+        ra, q1, q1_choices, q2, q2_choices = self._build_two_question_ra(
+            folder,
+            q1_choices=[
+                {"ref_id": "A", "value": "OK", "compute_result": "compliant"},
+                {"ref_id": "B", "value": "KO", "compute_result": "non_compliant"},
+                {
+                    "ref_id": "C",
+                    "value": "Mid",
+                    "compute_result": "partially_compliant",
+                },
+            ],
+            q2_choices=[
+                {"ref_id": "D", "value": "OK", "compute_result": "compliant"},
+            ],
+            q1_type=Question.Type.MULTIPLE_CHOICE,
+        )
+        a1 = Answer.objects.create(
+            requirement_assessment=ra, question=q1, folder=folder
+        )
+        # Select compliant + non_compliant on the same multi-choice question
+        a1.selected_choices.set([q1_choices[0], q1_choices[1]])
+        a2 = Answer.objects.create(
+            requirement_assessment=ra, question=q2, folder=folder
+        )
+        a2.selected_choices.set([q2_choices[0]])
+
+        ra.compute_score_and_result()
+        ra.refresh_from_db()
+        assert ra.result == "partially_compliant"
+
+    def test_legacy_true_false_literals_still_work(self, db):
+        """Existing YAML libraries using 'true'/'false' keep producing the prior result."""
+        folder = Folder.get_root_folder()
+        ra, q1, q1_choices, q2, q2_choices = self._build_two_question_ra(
+            folder,
+            q1_choices=[
+                {"ref_id": "A", "value": "Yes", "compute_result": "true"},
+                {"ref_id": "B", "value": "No", "compute_result": "false"},
+            ],
+            q2_choices=[
+                {"ref_id": "C", "value": "Yes", "compute_result": "true"},
+                {"ref_id": "D", "value": "No", "compute_result": "false"},
+            ],
+        )
+
+        # Both 'false' -> non_compliant (was non_compliant before the fix too)
+        a1 = Answer.objects.create(
+            requirement_assessment=ra, question=q1, folder=folder
+        )
+        a1.selected_choices.set([q1_choices[1]])
+        a2 = Answer.objects.create(
+            requirement_assessment=ra, question=q2, folder=folder
+        )
+        a2.selected_choices.set([q2_choices[1]])
+        ra.compute_score_and_result()
+        ra.refresh_from_db()
+        assert ra.result == "non_compliant"
+
+        # Both 'true' -> compliant
+        a1.selected_choices.set([q1_choices[0]])
+        a2.selected_choices.set([q2_choices[0]])
+        ra.compute_score_and_result()
+        ra.refresh_from_db()
+        assert ra.result == "compliant"
+
+        # Mixed -> partially_compliant
+        a1.selected_choices.set([q1_choices[0]])
+        a2.selected_choices.set([q2_choices[1]])
+        ra.compute_score_and_result()
+        ra.refresh_from_db()
+        assert ra.result == "partially_compliant"
+
+    def test_mixed_legacy_and_semantic_values(self, db):
+        """A framework that mixes legacy 'true' and semantic 'non_compliant' aggregates correctly."""
+        folder = Folder.get_root_folder()
+        ra, q1, q1_choices, q2, q2_choices = self._build_two_question_ra(
+            folder,
+            q1_choices=[
+                {"ref_id": "A", "value": "Yes", "compute_result": "true"},
+            ],
+            q2_choices=[
+                {
+                    "ref_id": "B",
+                    "value": "Non-compliant",
+                    "compute_result": "non_compliant",
+                },
+            ],
+        )
+        a1 = Answer.objects.create(
+            requirement_assessment=ra, question=q1, folder=folder
+        )
+        a1.selected_choices.set([q1_choices[0]])
+        a2 = Answer.objects.create(
+            requirement_assessment=ra, question=q2, folder=folder
+        )
+        a2.selected_choices.set([q2_choices[0]])
+
+        ra.compute_score_and_result()
+        ra.refresh_from_db()
+        assert ra.result == "partially_compliant"
+
+
+@pytest.mark.django_db
+class TestResolveComputeResult:
+    """Unit tests for the resolver/aggregator helpers themselves."""
+
+    def test_resolve_known_values(self):
+        from core.utils import resolve_compute_result
+
+        assert resolve_compute_result("compliant") == "compliant"
+        assert resolve_compute_result("non_compliant") == "non_compliant"
+        assert resolve_compute_result("partially_compliant") == "partially_compliant"
+        assert resolve_compute_result("not_applicable") == "not_applicable"
+
+    def test_resolve_legacy_booleans(self):
+        from core.utils import resolve_compute_result
+
+        assert resolve_compute_result("true") == "compliant"
+        assert resolve_compute_result("1") == "compliant"
+        assert resolve_compute_result("false") == "non_compliant"
+        assert resolve_compute_result("0") == "non_compliant"
+
+    def test_resolve_case_insensitive_and_whitespace(self):
+        from core.utils import resolve_compute_result
+
+        assert resolve_compute_result("  Compliant  ") == "compliant"
+        assert resolve_compute_result("NON_COMPLIANT") == "non_compliant"
+
+    def test_resolve_empty_and_none(self):
+        from core.utils import resolve_compute_result
+
+        assert resolve_compute_result(None) is None
+        assert resolve_compute_result("") is None
+        assert resolve_compute_result("   ") is None
+
+    def test_resolve_unknown_value_returns_none(self):
+        """Unrecognized strings return None instead of contributing."""
+        from core.utils import resolve_compute_result
+
+        assert resolve_compute_result("complient") is None  # typo
+        assert resolve_compute_result("yes") is None
+        assert resolve_compute_result("custom_value") is None
+
+    def test_aggregate_worst_wins(self):
+        from core.utils import aggregate_compute_results
+
+        assert aggregate_compute_results([]) is None
+        assert aggregate_compute_results([None, None]) is None
+        assert aggregate_compute_results(["compliant", "compliant"]) == "compliant"
+        assert (
+            aggregate_compute_results(["non_compliant", "non_compliant"])
+            == "non_compliant"
+        )
+        assert (
+            aggregate_compute_results(["compliant", "non_compliant"])
+            == "partially_compliant"
+        )
+        assert (
+            aggregate_compute_results(["partially_compliant"]) == "partially_compliant"
+        )
+        assert (
+            aggregate_compute_results(["not_applicable", "not_applicable"])
+            == "not_applicable"
+        )
+        # NA is neutral: dropped from the pool, other contributions decide.
+        assert (
+            aggregate_compute_results(["not_applicable", "non_compliant"])
+            == "non_compliant"
+        )
+        assert aggregate_compute_results(["not_applicable", "compliant"]) == "compliant"
+        assert (
+            aggregate_compute_results(["not_applicable", "partially_compliant"])
+            == "partially_compliant"
+        )
+
+
+@pytest.mark.django_db
 class TestVisibilityEdgeCases:
     def _make_visibility_setup(self, folder, q1_type, q2_depends_on):
         """Helper to create framework with Q1->Q2 depends_on chain."""
         fw = Framework.objects.create(
             name=f"Vis FW {q2_depends_on}",
             folder=folder,
-            is_published=True,
             min_score=0,
             max_score=100,
         )
@@ -380,7 +820,6 @@ class TestVisibilityEdgeCases:
             ref_id="VIS-REQ",
             assessable=True,
             folder=folder,
-            is_published=True,
         )
         q1_urn = "urn:test:vq1"
         if q2_depends_on and q2_depends_on.get("question") == "VQ1":
@@ -392,7 +831,6 @@ class TestVisibilityEdgeCases:
             type=q1_type,
             order=0,
             folder=folder,
-            is_published=True,
         )
         q2 = Question.objects.create(
             requirement_node=rn,
@@ -402,7 +840,6 @@ class TestVisibilityEdgeCases:
             depends_on=q2_depends_on,
             order=1,
             folder=folder,
-            is_published=True,
         )
         return fw, rn, q1, q2
 
@@ -427,7 +864,6 @@ class TestVisibilityEdgeCases:
             compute_result="true",
             order=0,
             folder=folder,
-            is_published=True,
         )
         c_b = QuestionChoice.objects.create(
             question=q1,
@@ -438,7 +874,6 @@ class TestVisibilityEdgeCases:
             compute_result="true",
             order=1,
             folder=folder,
-            is_published=True,
         )
         # Q2 choices
         q2_c = QuestionChoice.objects.create(
@@ -450,7 +885,6 @@ class TestVisibilityEdgeCases:
             compute_result="true",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q2,
@@ -461,7 +895,6 @@ class TestVisibilityEdgeCases:
             compute_result="false",
             order=1,
             folder=folder,
-            is_published=True,
         )
 
         perimeter = Perimeter.objects.create(name="Vis Perim All", folder=folder)
@@ -470,7 +903,6 @@ class TestVisibilityEdgeCases:
             framework=fw,
             folder=folder,
             perimeter=perimeter,
-            is_published=True,
             min_score=0,
             max_score=100,
         )
@@ -522,7 +954,6 @@ class TestVisibilityEdgeCases:
             compute_result="true",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q1,
@@ -533,7 +964,6 @@ class TestVisibilityEdgeCases:
             compute_result="true",
             order=1,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q2,
@@ -542,7 +972,6 @@ class TestVisibilityEdgeCases:
             value="X",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q2,
@@ -551,7 +980,6 @@ class TestVisibilityEdgeCases:
             value="Y",
             order=1,
             folder=folder,
-            is_published=True,
         )
 
         perimeter = Perimeter.objects.create(name="Vis Perim All2", folder=folder)
@@ -560,7 +988,6 @@ class TestVisibilityEdgeCases:
             framework=fw,
             folder=folder,
             perimeter=perimeter,
-            is_published=True,
             min_score=0,
             max_score=100,
         )
@@ -605,7 +1032,6 @@ class TestVisibilityEdgeCases:
             compute_result="true",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q1,
@@ -616,7 +1042,6 @@ class TestVisibilityEdgeCases:
             compute_result="false",
             order=1,
             folder=folder,
-            is_published=True,
         )
         q2_c = QuestionChoice.objects.create(
             question=q2,
@@ -627,7 +1052,6 @@ class TestVisibilityEdgeCases:
             compute_result="true",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q2,
@@ -638,7 +1062,6 @@ class TestVisibilityEdgeCases:
             compute_result="false",
             order=1,
             folder=folder,
-            is_published=True,
         )
 
         perimeter = Perimeter.objects.create(name="Vis Perim SC", folder=folder)
@@ -647,7 +1070,6 @@ class TestVisibilityEdgeCases:
             framework=fw,
             folder=folder,
             perimeter=perimeter,
-            is_published=True,
             min_score=0,
             max_score=100,
         )
@@ -682,7 +1104,6 @@ class TestVisibilityEdgeCases:
         fw = Framework.objects.create(
             name="Max Agg Framework",
             folder=folder,
-            is_published=True,
             min_score=0,
             max_score=100,
         )
@@ -692,7 +1113,6 @@ class TestVisibilityEdgeCases:
             ref_id="CH-REQ",
             assessable=True,
             folder=folder,
-            is_published=True,
         )
         q1 = Question.objects.create(
             requirement_node=rn,
@@ -701,7 +1121,6 @@ class TestVisibilityEdgeCases:
             type=Question.Type.UNIQUE_CHOICE,
             order=0,
             folder=folder,
-            is_published=True,
         )
         q1_c = QuestionChoice.objects.create(
             question=q1,
@@ -712,7 +1131,6 @@ class TestVisibilityEdgeCases:
             compute_result="true",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q1,
@@ -723,7 +1141,6 @@ class TestVisibilityEdgeCases:
             compute_result="false",
             order=1,
             folder=folder,
-            is_published=True,
         )
 
         q2 = Question.objects.create(
@@ -738,7 +1155,6 @@ class TestVisibilityEdgeCases:
                 "condition": "any",
             },
             folder=folder,
-            is_published=True,
         )
         q2_c = QuestionChoice.objects.create(
             question=q2,
@@ -749,7 +1165,6 @@ class TestVisibilityEdgeCases:
             compute_result="true",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q2,
@@ -760,7 +1175,6 @@ class TestVisibilityEdgeCases:
             compute_result="false",
             order=1,
             folder=folder,
-            is_published=True,
         )
 
         q3 = Question.objects.create(
@@ -775,7 +1189,6 @@ class TestVisibilityEdgeCases:
                 "condition": "any",
             },
             folder=folder,
-            is_published=True,
         )
         q3_c = QuestionChoice.objects.create(
             question=q3,
@@ -786,7 +1199,6 @@ class TestVisibilityEdgeCases:
             compute_result="true",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q3,
@@ -797,7 +1209,6 @@ class TestVisibilityEdgeCases:
             compute_result="false",
             order=1,
             folder=folder,
-            is_published=True,
         )
 
         perimeter = Perimeter.objects.create(name="Chain Perim", folder=folder)
@@ -806,7 +1217,6 @@ class TestVisibilityEdgeCases:
             framework=fw,
             folder=folder,
             perimeter=perimeter,
-            is_published=True,
             min_score=0,
             max_score=100,
         )
@@ -863,7 +1273,6 @@ class TestVisibilityEdgeCases:
             compute_result="true",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q1,
@@ -874,7 +1283,6 @@ class TestVisibilityEdgeCases:
             compute_result="false",
             order=1,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q2,
@@ -883,7 +1291,6 @@ class TestVisibilityEdgeCases:
             value="X",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q2,
@@ -892,7 +1299,6 @@ class TestVisibilityEdgeCases:
             value="Y",
             order=1,
             folder=folder,
-            is_published=True,
         )
 
         perimeter = Perimeter.objects.create(name="Vis Perim UA", folder=folder)
@@ -901,7 +1307,6 @@ class TestVisibilityEdgeCases:
             framework=fw,
             folder=folder,
             perimeter=perimeter,
-            is_published=True,
             min_score=0,
             max_score=100,
         )
@@ -935,7 +1340,6 @@ class TestVisibilityEdgeCases:
             compute_result="true",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q1,
@@ -946,7 +1350,6 @@ class TestVisibilityEdgeCases:
             compute_result="false",
             order=1,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q2,
@@ -955,7 +1358,6 @@ class TestVisibilityEdgeCases:
             value="X",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q2,
@@ -964,7 +1366,6 @@ class TestVisibilityEdgeCases:
             value="Y",
             order=1,
             folder=folder,
-            is_published=True,
         )
 
         perimeter = Perimeter.objects.create(name="Vis Perim Empty", folder=folder)
@@ -973,7 +1374,6 @@ class TestVisibilityEdgeCases:
             framework=fw,
             folder=folder,
             perimeter=perimeter,
-            is_published=True,
             min_score=0,
             max_score=100,
         )
@@ -998,7 +1398,7 @@ class TestVisibilityEdgeCases:
         assert ra.result == "compliant"
 
     def test_depends_on_with_unknown_condition(self, db):
-        """condition='foo' -> fallback returns True (visible)."""
+        """condition='foo' -> fallback returns False (hidden)."""
         folder = Folder.get_root_folder()
         fw, rn, q1, q2 = self._make_visibility_setup(
             folder,
@@ -1018,7 +1418,6 @@ class TestVisibilityEdgeCases:
             compute_result="true",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q1,
@@ -1029,7 +1428,6 @@ class TestVisibilityEdgeCases:
             compute_result="false",
             order=1,
             folder=folder,
-            is_published=True,
         )
         q2_c = QuestionChoice.objects.create(
             question=q2,
@@ -1040,7 +1438,6 @@ class TestVisibilityEdgeCases:
             compute_result="true",
             order=0,
             folder=folder,
-            is_published=True,
         )
         QuestionChoice.objects.create(
             question=q2,
@@ -1051,7 +1448,6 @@ class TestVisibilityEdgeCases:
             compute_result="false",
             order=1,
             folder=folder,
-            is_published=True,
         )
 
         perimeter = Perimeter.objects.create(name="Vis Perim Foo", folder=folder)
@@ -1060,7 +1456,6 @@ class TestVisibilityEdgeCases:
             framework=fw,
             folder=folder,
             perimeter=perimeter,
-            is_published=True,
             min_score=0,
             max_score=100,
         )
@@ -1070,7 +1465,8 @@ class TestVisibilityEdgeCases:
             folder=folder,
         )
 
-        # Answer Q1 -> Q2 is visible (unknown condition falls through to True)
+        # Answer Q1 -> Q2 stays hidden (unknown condition falls through to False).
+        # Q2's answer is preserved in case the user fixes the condition later.
         a1 = Answer.objects.create(
             requirement_assessment=ra,
             question=q1,
@@ -1087,5 +1483,5 @@ class TestVisibilityEdgeCases:
         ra.compute_score_and_result()
         ra.refresh_from_db()
 
-        # Both visible and answered -> compliant
+        # Only Q1 visible and answered with a 'compliant' choice -> compliant
         assert ra.result == "compliant"

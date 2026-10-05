@@ -2,5 +2,8 @@ dependencies:
 - name: postgresql
   repository: oci://registry-1.docker.io/bitnamicharts
   version: 16.6.3
-digest: sha256:1879a79586c29784a0c6cbb5b120410cbfa084200f56602db4919577aa07c402
-generated: "2025-04-14T12:55:58.383487154Z"
+- name: qdrant
+  repository: https://qdrant.github.io/qdrant-helm
+  version: 1.19.1
+digest: sha256:510a14d76000ed319ddf19ac7b6002883ac3d945f94f284d65156d9ff42f4569
+generated: "2026-09-28T19:28:12.541646+02:00"

@@ -5,6 +5,7 @@ import {
 	urlParamModelForeignKeyFields,
 	urlParamModelSelectFields
 } from '$lib/utils/crud';
+import { formatSelectFieldData } from '$lib/utils/load';
 import { modelSchema } from '$lib/utils/schemas';
 import type { ModelInfo, urlModel } from '$lib/utils/types';
 import { type Actions } from '@sveltejs/kit';
@@ -14,7 +15,7 @@ import { z } from 'zod';
 import { m } from '$paraglide/messages';
 import type { PageServerLoad } from './$types';
 import { listViewFields } from '$lib/utils/table';
-import { type TableSource } from '@skeletonlabs/skeleton-svelte';
+import { type TableSource } from '$lib/components/ModelTable/types';
 
 export const load: PageServerLoad = async ({ params, fetch }) => {
 	const schema = z.object({ id: z.string().uuid() });
@@ -38,12 +39,8 @@ export const load: PageServerLoad = async ({ params, fetch }) => {
 		const url = `${BASE_API_URL}/ebios-rm/${URLModel}/${selectField.field}/`;
 		const response = await fetch(url);
 		if (response.ok) {
-			selectOptions[selectField.field] = await response.json().then((data) =>
-				Object.entries(data).map(([key, value]) => ({
-					label: value,
-					value: selectField.valueType === 'number' ? parseInt(key) : key
-				}))
-			);
+			const responseData = await response.json();
+			selectOptions[selectField.field] = formatSelectFieldData(responseData, selectField);
 		} else {
 			console.error(`Failed to fetch data for ${selectField.field}: ${response.statusText}`);
 		}
@@ -65,7 +62,15 @@ export const load: PageServerLoad = async ({ params, fetch }) => {
 		meta: []
 	};
 
+	const stepBased = ['standard', 'advanced'].includes(object.quotation_method);
+	const ratingKitResponse = stepBased
+		? await fetch(`${BASE_API_URL}/ebios-rm/studies/${params.id}/rating-kit/`)
+		: null;
+	const ratingKit = ratingKitResponse?.ok ? await ratingKitResponse.json() : null;
+
 	return {
+		ratingKit,
+		quotationMethod: object.quotation_method,
 		createForm,
 		deleteForm,
 		model,

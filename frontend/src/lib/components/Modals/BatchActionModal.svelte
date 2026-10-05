@@ -2,6 +2,7 @@
 	import { m } from '$paraglide/messages';
 	import { getModalStore, type ModalStore } from './stores';
 	import { safeTranslate, unsafeTranslate } from '$lib/utils/i18n';
+	import { fetchAllPages } from '$lib/utils/pagination';
 	import { onMount } from 'svelte';
 
 	function translateOption(option: { label: string; value: string }): string {
@@ -10,21 +11,24 @@
 
 	const modalStore: ModalStore = getModalStore();
 
-	const cBase = 'card bg-white p-6 w-modal space-y-6';
-	const cHeader = 'text-xl font-medium text-gray-900';
+	const cBase = 'card bg-surface-100-900 border border-surface-500 p-6 w-modal space-y-6';
+	const cHeader = 'text-xl font-medium text-surface-950-50';
 
 	interface Props {
 		parent: any;
 		actionType:
-			| 'delete'
-			| 'change_field'
-			| 'change_m2m'
-			| 'add_m2m'
-			| 'remove_m2m'
-			| 'change_folder';
+			'delete' | 'change_field' | 'change_m2m' | 'add_m2m' | 'remove_m2m' | 'change_folder';
 		count: number;
 		optionsEndpoint?: string;
+		enableDoubleDash?: boolean;
 		multiSelect?: boolean;
+		inputType?: 'date';
+		// Optional i18n key for an action-specific warning (receives {count}),
+		// e.g. a cascade disclosure on delete.
+		confirmMessage?: string;
+		// Value fixed by config ("mark as read"): skips the picker, so the modal is a
+		// plain confirmation and this is what gets sent.
+		fixedValue?: string;
 		onConfirm: (value?: string | string[]) => void;
 	}
 
@@ -33,7 +37,11 @@
 		actionType,
 		count,
 		optionsEndpoint,
+		enableDoubleDash = false,
 		multiSelect = false,
+		inputType = undefined,
+		confirmMessage = undefined,
+		fixedValue = undefined,
 		onConfirm
 	}: Props = $props();
 
@@ -45,6 +53,8 @@
 	let deleteConfirmInput: string = $state('');
 
 	const isValueAction = actionType !== 'delete';
+	// Only a value action *without* a fixed value needs the user to choose something.
+	const needsSelection = isValueAction && fixedValue === undefined;
 	const yes = m.yes().toLowerCase();
 
 	const filteredOptions = $derived(
@@ -72,14 +82,27 @@
 		}));
 	}
 
+	const unsetLabels = new Set(['--', 'undefined']); // taken from Select.svelte
+
+	function withDoubleDash(opts: { label: string; value: string }[]) {
+		// Prepend a "--" (unset) option, unless one is already present
+		if (enableDoubleDash && !opts.find((o) => unsetLabels.has(o.label?.toLowerCase()))) {
+			return [{ label: '--', value: '--' }, ...opts];
+		}
+		return opts;
+	}
+
 	onMount(async () => {
-		if (isValueAction && optionsEndpoint) {
+		if (needsSelection && optionsEndpoint) {
 			loading = true;
 			try {
 				const res = await fetch(`/${optionsEndpoint}`);
 				if (res.ok) {
 					const data = await res.json();
-					options = parseOptions(data);
+					// Choice endpoints return dicts and stay as-is; paginated list endpoints
+					// with more than one page need the remaining pages fetched.
+					const items = data?.next ? await fetchAllPages(fetch, `/${optionsEndpoint}`) : data;
+					options = withDoubleDash(parseOptions(items));
 				}
 			} catch (e) {
 				console.error('Failed to fetch options', e);
@@ -92,10 +115,13 @@
 	function handleConfirm() {
 		if (actionType === 'delete') {
 			onConfirm();
+		} else if (fixedValue !== undefined) {
+			onConfirm(fixedValue);
 		} else if (multiSelect) {
 			onConfirm(selectedValues);
 		} else {
-			onConfirm(selectedValue);
+			// "--" means "unset": send undefined so the backend receives null
+			onConfirm(selectedValue === '--' ? undefined : selectedValue);
 		}
 		parent.onClose();
 	}
@@ -111,9 +137,11 @@
 	const canConfirm = $derived(
 		actionType === 'delete'
 			? !!deleteConfirmInput && deleteConfirmInput.trim().toLowerCase() === yes
-			: multiSelect
-				? selectedValues.length > 0
-				: selectedValue !== ''
+			: fixedValue !== undefined
+				? true
+				: multiSelect
+					? selectedValues.length > 0
+					: selectedValue !== ''
 	);
 </script>
 
@@ -130,27 +158,48 @@
 
 		{#if actionType === 'delete'}
 			<article>{m.batchActionConfirmDelete({ count })}</article>
+			{#if confirmMessage}
+				<article class="text-sm font-medium text-amber-600">
+					{safeTranslate(confirmMessage, { count })}
+				</article>
+			{/if}
 			<div class="space-y-2">
-				<p class="text-sm font-medium text-red-600">{m.confirmYes()}</p>
+				<p class="text-sm font-medium text-red-600">{m.confirmYes({ word: m.yes() })}</p>
 				<input
 					type="text"
 					data-testid="batch-delete-confirm-textfield"
 					bind:value={deleteConfirmInput}
-					placeholder={m.confirmYesPlaceHolder()}
+					placeholder={m.confirmYesPlaceHolder({ word: m.yes() })}
 					class="input w-full"
-					aria-label={m.confirmYes()}
+					aria-label={m.confirmYes({ word: m.yes() })}
 				/>
 			</div>
 		{:else}
 			<article>{m.batchActionConfirmChange({ count })}</article>
+			{#if confirmMessage}
+				<article class="text-sm font-medium text-amber-600">
+					{safeTranslate(confirmMessage, { count })}
+				</article>
+			{/if}
 
-			{#if loading}
-				<div class="text-sm text-gray-500">Loading...</div>
+			{#if !needsSelection}
+				<!-- value comes from the action's config; nothing to pick -->
+			{:else if inputType === 'date'}
+				<input
+					type="date"
+					class="input w-full border border-surface-300-700 rounded px-3 py-2"
+					data-testid="batch-date-input"
+					aria-label={$modalStore[0].title}
+					bind:value={selectedValue}
+				/>
+			{:else if loading}
+				<div class="text-sm text-surface-600-400">Loading...</div>
 			{:else if multiSelect}
 				<div class="space-y-2">
 					<input
 						type="text"
-						class="input w-full border border-gray-300 rounded px-3 py-2 text-sm"
+						class="input w-full border border-surface-300-700 rounded px-3 py-2 text-sm"
+						aria-label={m.search()}
 						placeholder={m.searchPlaceholder()}
 						bind:value={searchQuery}
 					/>
@@ -160,11 +209,12 @@
 								{@const opt = options.find((o) => o.value === val)}
 								{#if opt}
 									<span
-										class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary-100 text-primary-800 text-xs"
+										class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary-100 text-primary-800-200 text-xs"
 									>
 										{translateOption(opt)}
 										<button
 											type="button"
+											aria-label="{m.remove()} {translateOption(opt)}"
 											class="hover:text-primary-600"
 											onclick={() => toggleValue(val)}
 										>
@@ -175,10 +225,10 @@
 							{/each}
 						</div>
 					{/if}
-					<div class="max-h-48 overflow-y-auto border border-gray-200 rounded">
+					<div class="max-h-48 overflow-y-auto border border-surface-200-800 rounded">
 						{#each filteredOptions as option}
 							<label
-								class="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+								class="flex items-center gap-2 px-3 py-1.5 hover:bg-surface-50-950 cursor-pointer border-b border-surface-100-900 last:border-b-0"
 							>
 								<input
 									type="checkbox"
@@ -190,7 +240,7 @@
 							</label>
 						{/each}
 						{#if filteredOptions.length === 0}
-							<div class="px-3 py-2 text-sm text-gray-400">
+							<div class="px-3 py-2 text-sm text-surface-400-600">
 								{m.noResultsFound()}
 							</div>
 						{/if}
@@ -198,7 +248,7 @@
 				</div>
 			{:else}
 				<select
-					class="select w-full border border-gray-300 rounded px-3 py-2"
+					class="select w-full border border-surface-300-700 rounded px-3 py-2"
 					bind:value={selectedValue}
 				>
 					<option value="" disabled>--</option>
@@ -209,10 +259,10 @@
 			{/if}
 		{/if}
 
-		<footer class="flex gap-3 justify-end pt-4 border-t border-gray-200">
+		<footer class="flex gap-3 justify-end pt-4 border-t border-surface-200-800">
 			<button
 				type="button"
-				class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50"
+				class="px-4 py-2 text-sm font-medium text-surface-700-300 bg-surface-50-950 border border-surface-300-700 hover:bg-surface-50-950"
 				data-testid="batch-cancel-button"
 				onclick={parent.onClose}
 			>

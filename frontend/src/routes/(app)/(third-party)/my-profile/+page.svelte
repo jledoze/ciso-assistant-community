@@ -9,6 +9,10 @@
 	import { canPerformAction } from '$lib/utils/access-control';
 	import type { PageData } from './$types';
 
+	// leader / deputy / member -> teamLeader / teamDeputy / teamMember
+	const roleLabel = (role: string) =>
+		safeTranslate(`team${role.charAt(0).toUpperCase()}${role.slice(1)}`);
+
 	function filterUserData() {
 		const filtered = {};
 		const filter = ['id', 'is_active'];
@@ -41,7 +45,7 @@
 	let { data }: Props = $props();
 </script>
 
-<div class="flex flex-col bg-white card shadow-lg p-4 space-y-4">
+<div class="flex flex-col bg-surface-50-950 card shadow-lg p-4 space-y-4">
 	<div class="flex flex-row items-center justify-between">
 		<h1 class="text-xl font-semibold">
 			{data.currentUser.first_name}
@@ -66,7 +70,7 @@
 		</div>
 	</div>
 	<div class="flex flex-row w-full space-x-2">
-		<div class="flex flex-col w-1/2 card bg-white p-2 space-y-4">
+		<div class="flex flex-col w-1/2 card bg-surface-50-950 p-2 space-y-4">
 			{#each Object.entries(filterUserData()) as [label, value]}
 				<div class="flex flex-col">
 					<p class="font-semibold text-sm">{safeTranslate(label)}</p>
@@ -74,19 +78,37 @@
 				</div>
 			{/each}
 		</div>
-		<div class="flex flex-col w-1/2 card bg-white p-2 space-y-4">
-			<h2 class="text-xl mb-1 font-semibold">{m.myUserGroups()}</h2>
-			<div class="overflow-auto space-y-2">
-				{#each data.currentUser.user_groups as group}
-					<div class="flex flex-row items-center">
-						{#if group.builtin}
-							<span class="badge preset-tonal-primary mr-2">{m.builtin()}</span>
-						{/if}
-						<p class="font-semibold text-sm">
-							{group.str}
-						</p>
-					</div>
-				{/each}
+		<div class="flex flex-col w-1/2 space-y-2">
+			<div class="flex flex-col card bg-surface-50-950 p-2 space-y-4">
+				<h2 class="text-xl mb-1 font-semibold">{m.myUserGroups()}</h2>
+				<div class="overflow-auto space-y-2">
+					{#each data.currentUser.user_groups as group}
+						<div class="flex flex-row items-center">
+							{#if group.builtin}
+								<span class="badge preset-tonal-primary mr-2">{m.builtin()}</span>
+							{/if}
+							<p class="font-semibold text-sm">
+								{group.str}
+							</p>
+						</div>
+					{/each}
+				</div>
+			</div>
+			<div class="flex flex-col card bg-surface-50-950 p-2 space-y-4">
+				<h2 class="text-xl mb-1 font-semibold">{m.myTeams()}</h2>
+				<div class="overflow-auto space-y-2">
+					{#each data.teams ?? [] as team}
+						<div class="flex flex-row items-center gap-2">
+							<span class="badge preset-tonal-secondary">{roleLabel(team.role)}</span>
+							<p class="font-semibold text-sm">{team.str}</p>
+							{#if team.folder}
+								<span class="text-xs text-surface-600-400">{team.folder.str}</span>
+							{/if}
+						</div>
+					{:else}
+						<p class="text-sm text-surface-600-400">{m.noTeams()}</p>
+					{/each}
+				</div>
 			</div>
 		</div>
 	</div>

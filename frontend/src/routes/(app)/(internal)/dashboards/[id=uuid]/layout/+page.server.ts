@@ -1,6 +1,7 @@
 import { getModelInfo, urlParamModelSelectFields } from '$lib/utils/crud';
-import { loadDetail } from '$lib/utils/load';
+import { loadDetail, formatSelectFieldData } from '$lib/utils/load';
 import { BASE_API_URL } from '$lib/utils/constants';
+import { fetchAllPages } from '$lib/utils/pagination';
 import { modelSchema } from '$lib/utils/schemas';
 import type { PageServerLoad } from './$types';
 import { type Actions, fail } from '@sveltejs/kit';
@@ -19,10 +20,7 @@ export const load: PageServerLoad = async (event) => {
 
 	// Fetch widgets for this dashboard
 	const widgetsEndpoint = `${BASE_API_URL}/metrology/dashboard-widgets/?dashboard=${event.params.id}`;
-	const widgetsResponse = await event.fetch(widgetsEndpoint);
-	const widgetsData = widgetsResponse.ok ? await widgetsResponse.json() : { results: [] };
-
-	const widgets = widgetsData.results || [];
+	const widgets = await fetchAllPages(event.fetch, widgetsEndpoint).catch(() => []);
 
 	// Calculate the first free row (after all existing widgets)
 	const firstFreeRow =
@@ -88,12 +86,8 @@ export const load: PageServerLoad = async (event) => {
 		const url = `${BASE_API_URL}/${widgetModel.endpointUrl}/${selectField.field}/`;
 		const response = await event.fetch(url);
 		if (response.ok) {
-			selectOptions[selectField.field] = await response.json().then((data: Record<string, any>) =>
-				Object.entries(data).map(([key, value]) => ({
-					label: value,
-					value: selectField.valueType === 'number' ? parseInt(key) : key
-				}))
-			);
+			const responseData = await response.json();
+			selectOptions[selectField.field] = formatSelectFieldData(responseData, selectField);
 		}
 	}
 

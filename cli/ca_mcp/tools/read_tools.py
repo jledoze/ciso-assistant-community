@@ -3,7 +3,7 @@
 import json
 import sys
 from rich import print as rprint
-from ..client import make_get_request, get_paginated_results
+from ..client import make_get_request, get_paginated_results, found_line
 from ..utils.response_formatter import (
     success_response,
     error_response,
@@ -12,12 +12,19 @@ from ..utils.response_formatter import (
 )
 
 
-async def get_risk_scenarios(folder: str = None, risk_assessment: str = None):
+async def get_risk_scenarios(
+    folder: str = None,
+    risk_assessment: str = None,
+    limit: int = None,
+    offset: int = None,
+):
     """List risk scenarios from Risk Registry; filter by folder or assessment
 
     Args:
         folder: Folder ID/name
         risk_assessment: Risk assessment ID/name
+        limit: Max rows to return (default 100)
+        offset: Row to start from, for paging through large registers
     """
     try:
         from ..resolvers import resolve_folder_id, resolve_risk_assessment_id
@@ -35,6 +42,10 @@ async def get_risk_scenarios(folder: str = None, risk_assessment: str = None):
             params["risk_assessment"] = resolve_risk_assessment_id(risk_assessment)
             filters["risk_assessment"] = risk_assessment
 
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
         res = make_get_request("/risk-scenarios/", params=params)
 
         if res.status_code != 200:
@@ -46,59 +57,30 @@ async def get_risk_scenarios(folder: str = None, risk_assessment: str = None):
         if not scenarios:
             return empty_response("risk scenarios", filters)
 
-        result = f"Found {len(scenarios)} risk scenarios"
+        result = found_line(scenarios, "risk scenarios", paginated=True, offset=offset)
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
-        result += "|Ref|Name|Assets|Threats|Existing Controls|Additional Controls|Current|Residual|\n"
-        result += "|---|---|---|---|---|---|---|---|\n"
+        result += (
+            "|UUID|Ref|Name|Inherent Level|Current Level|Residual Level|Treatment|\n"
+        )
+        result += "|---|---|---|---|---|---|---|\n"
 
         for rs in scenarios:
+            uuid = rs.get("id", "N/A")
             ref_id = rs.get("ref_id") or "N/A"
             name = rs.get("name", "N/A")
+            inherent_level = (rs.get("inherent_level") or {}).get("name", "--")
             current_level = (rs.get("current_level") or {}).get("name", "--")
             residual_level = (rs.get("residual_level") or {}).get("name", "--")
+            treatment = rs.get("treatment") or "--"
 
-            # Extract asset names
-            assets = rs.get("assets", [])
-            asset_names = (
-                ", ".join(a.get("name", a.get("str", "?")) for a in assets)
-                if assets
-                else "-"
-            )
-
-            # Extract threat names
-            threats = rs.get("threats", [])
-            threat_names = (
-                ", ".join(t.get("name", t.get("str", "?")) for t in threats)
-                if threats
-                else "-"
-            )
-
-            # Extract existing applied control names (current risk)
-            existing_applied_controls = rs.get("existing_applied_controls", [])
-            existing_applied_control_names = (
-                ", ".join(
-                    a.get("name", a.get("str", "?")) for a in existing_applied_controls
-                )
-                if existing_applied_controls
-                else "-"
-            )
-
-            # Extract applied control names (additional/treatment controls for residual risk)
-            applied_controls = rs.get("applied_controls", [])
-            applied_control_names = (
-                ", ".join(a.get("name", a.get("str", "?")) for a in applied_controls)
-                if applied_controls
-                else "-"
-            )
-
-            result += f"|{ref_id}|{name}|{asset_names}|{threat_names}|{existing_applied_control_names}|{applied_control_names}|{current_level}|{residual_level}|\n"
+            result += f"|{uuid}|{ref_id}|{name}|{inherent_level}|{current_level}|{residual_level}|{treatment}|\n"
 
         return success_response(
             result,
             "get_risk_scenarios",
-            "Use this table to answer the user's question about risk scenarios",
+            "Use get_risk_scenario with a UUID to retrieve full details of a specific scenario",
         )
     except Exception as e:
         return error_response(
@@ -109,7 +91,75 @@ async def get_risk_scenarios(folder: str = None, risk_assessment: str = None):
         )
 
 
-async def get_applied_controls(folder: str = None):
+async def get_risk_scenario(scenario_id: str):
+    """Retrieve full details of a single risk scenario by its UUID
+
+    Args:
+        scenario_id: Risk scenario UUID
+    """
+    try:
+        from ..resolvers import resolve_risk_scenario_id
+
+        resolved_id = resolve_risk_scenario_id(scenario_id)
+        res = make_get_request(f"/risk-scenarios/{resolved_id}/")
+
+        if res.status_code != 200:
+            return http_error_response(res.status_code, res.text)
+
+        rs = res.json()
+
+        result = f"## Risk Scenario: {rs.get('name', 'N/A')}\n\n"
+        result += f"**ID:** {rs.get('id', 'N/A')}\n"
+        result += f"**Ref ID:** {rs.get('ref_id') or '-'}\n"
+        result += f"**Description:** {rs.get('description') or '-'}\n"
+        result += f"**Justification:** {rs.get('justification') or '-'}\n"
+        result += f"**Treatment:** {rs.get('treatment') or '-'}\n"
+        result += f"**Existing Controls:** {rs.get('existing_controls') or '-'}\n\n"
+
+        result += "### Inherent Risk\n"
+        result += f"**Proba:** {(rs.get('inherent_proba') or {}).get('name', '--')}\n"
+        result += f"**Impact:** {(rs.get('inherent_impact') or {}).get('name', '--')}\n"
+        result += f"**Level:** {(rs.get('inherent_level') or {}).get('name', '--')}\n\n"
+
+        result += "### Current Risk\n"
+        result += f"**Proba:** {(rs.get('current_proba') or {}).get('name', '--')}\n"
+        result += f"**Impact:** {(rs.get('current_impact') or {}).get('name', '--')}\n"
+        result += f"**Level:** {(rs.get('current_level') or {}).get('name', '--')}\n\n"
+
+        result += "### Residual Risk\n"
+        result += f"**Proba:** {(rs.get('residual_proba') or {}).get('name', '--')}\n"
+        result += f"**Impact:** {(rs.get('residual_impact') or {}).get('name', '--')}\n"
+        result += f"**Level:** {(rs.get('residual_level') or {}).get('name', '--')}\n\n"
+
+        threats = rs.get("threats", [])
+        if threats:
+            result += f"**Threats:** {', '.join(t.get('str', str(t)) if isinstance(t, dict) else str(t) for t in threats)}\n"
+
+        assets = rs.get("assets", [])
+        if assets:
+            result += f"**Assets:** {', '.join(a.get('str', str(a)) if isinstance(a, dict) else str(a) for a in assets)}\n"
+
+        applied_controls = rs.get("applied_controls", [])
+        if applied_controls:
+            result += f"**Applied Controls:** {', '.join(c.get('str', str(c)) if isinstance(c, dict) else str(c) for c in applied_controls)}\n"
+
+        return success_response(
+            result,
+            "get_risk_scenario",
+            "Use update_risk_scenario to modify this scenario",
+        )
+    except Exception as e:
+        return error_response(
+            "Internal Error",
+            str(e),
+            "Report this error to the user",
+            retry_allowed=False,
+        )
+
+
+async def get_applied_controls(
+    folder: str = None, limit: int = None, offset: int = None
+):
     """List applied controls from action plan; filter by folder
 
     Args:
@@ -126,6 +176,10 @@ async def get_applied_controls(folder: str = None):
             params["folder"] = resolve_folder_id(folder)
             filters["folder"] = folder
 
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
         res = make_get_request("/applied-controls/", params=params)
 
         if res.status_code != 200:
@@ -137,12 +191,12 @@ async def get_applied_controls(folder: str = None):
         if not controls:
             return empty_response("applied controls", filters)
 
-        result = f"Found {len(controls)} applied controls"
+        result = found_line(controls, "applied controls", paginated=True, offset=offset)
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
-        result += "|UUID|Ref|Name|Status|ETA|Owner|Domain|Category|CSF Function|Effort|Impact|Priority|Cost|\n"
-        result += "|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
+        result += "|UUID|Ref|Name|Status|ETA|Owner|Owner UUIDs|Domain|Category|CSF Function|Effort|Impact|Priority|Cost|\n"
+        result += "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
 
         for item in controls:
             uuid = item.get("id")
@@ -159,6 +213,13 @@ async def get_applied_controls(folder: str = None):
                 if owners
                 else "N/A"
             )
+            owner_uuids = (
+                ", ".join(
+                    o.get("id", "") if isinstance(o, dict) else str(o) for o in owners
+                )
+                if owners
+                else "N/A"
+            )
             domain = (item.get("folder") or {}).get("str", "N/A")
             category = item.get("category", "N/A")
             csf_function = item.get("csf_function", "N/A")
@@ -167,7 +228,7 @@ async def get_applied_controls(folder: str = None):
             priority = item.get("priority", "N/A")
             cost = item.get("cost", 0)
 
-            result += f"|{uuid}|{ref_id}|{name}|{status}|{eta}|{owner_str}|{domain}|{category}|{csf_function}|{effort}|{impact}|{priority}|{cost}|\n"
+            result += f"|{uuid}|{ref_id}|{name}|{status}|{eta}|{owner_str}|{owner_uuids}|{domain}|{category}|{csf_function}|{effort}|{impact}|{priority}|{cost}|\n"
 
         return success_response(
             result,
@@ -297,7 +358,7 @@ async def get_folders(name: str = None):
         if not folders:
             return empty_response("folders", filters)
 
-        result = f"Found {len(folders)} folders"
+        result = found_line(folders, "folders")
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
@@ -360,7 +421,7 @@ async def get_perimeters(folder: str = None, name: str = None):
         if not perimeters:
             return empty_response("perimeters", filters)
 
-        result = f"Found {len(perimeters)} perimeters"
+        result = found_line(perimeters, "perimeters")
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
@@ -402,7 +463,7 @@ async def get_risk_matrices():
         if not matrices:
             return empty_response("risk matrices", None)
 
-        result = f"Found {len(matrices)} risk matrices\n\n"
+        result = found_line(matrices, "risk matrices") + "\n\n"
         result += "|ID|Name|\n"
         result += "|---|---|\n"
 
@@ -578,7 +639,7 @@ async def get_risk_assessments(folder: str = None, perimeter: str = None):
         if not assessments:
             return "No risk assessments found"
 
-        result = f"Found {len(assessments)} risk assessments"
+        result = found_line(assessments, "risk assessments")
         if folder:
             result += f" (folder: {folder})"
         if perimeter:
@@ -640,8 +701,9 @@ async def get_threats(
         if not threats:
             return "No threats found"
 
-        # Apply limit if specified (0 means no limit)
-        total_count = len(threats)
+        # Apply limit if specified (0 means no limit). Prefer the server-side
+        # total, since slicing drops the ResultList that carries it.
+        total_count = getattr(threats, "total", None) or len(threats)
         if limit > 0:
             threats = threats[:limit]
 
@@ -668,7 +730,7 @@ async def get_threats(
         return f"Error in get_threats: {str(e)}"
 
 
-async def get_assets(folder: str = None):
+async def get_assets(folder: str = None, limit: int = None, offset: int = None):
     """List assets with IDs, names, and types
 
     Args:
@@ -685,6 +747,10 @@ async def get_assets(folder: str = None):
             params["folder"] = resolve_folder_id(folder)
             filters["folder"] = folder
 
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
         res = make_get_request("/assets/", params=params)
 
         if res.status_code != 200:
@@ -696,7 +762,7 @@ async def get_assets(folder: str = None):
         if not assets:
             return empty_response("assets", filters)
 
-        result = f"Found {len(assets)} assets"
+        result = found_line(assets, "assets", paginated=True, offset=offset)
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
@@ -751,7 +817,7 @@ async def get_incidents(folder: str = None):
         if not incidents:
             return "No incidents found"
 
-        result = f"Found {len(incidents)} incidents"
+        result = found_line(incidents, "incidents")
         if folder:
             result += f" (folder: {folder})"
         result += "\n\n"
@@ -798,7 +864,7 @@ async def get_security_exceptions(folder: str = None):
         if not exceptions:
             return "No security exceptions found"
 
-        result = f"Found {len(exceptions)} security exceptions"
+        result = found_line(exceptions, "security exceptions")
         if folder:
             result += f" (folder: {folder})"
         result += "\n\n"
@@ -868,7 +934,7 @@ async def get_frameworks(folder: str = None):
         if not frameworks:
             return "No frameworks found"
 
-        result = f"Found {len(frameworks)} frameworks"
+        result = found_line(frameworks, "frameworks")
         if folder:
             result += f" (folder: {folder})"
         result += "\n\n"
@@ -916,7 +982,7 @@ async def get_business_impact_analyses(folder: str = None):
         if not bias:
             return "No Business Impact Analyses found"
 
-        result = f"Found {len(bias)} Business Impact Analyses"
+        result = found_line(bias, "Business Impact Analyses")
         if folder:
             result += f" (folder: {folder})"
         result += "\n\n"
@@ -942,6 +1008,8 @@ async def get_business_impact_analyses(folder: str = None):
 async def get_requirement_assessments(
     compliance_assessment_id_or_name: str = None,
     ref_id: str = None,
+    limit: int = None,
+    offset: int = None,
 ):
     """List requirement assessments (audit requirements) with IDs and results. Use IDs with update_requirement_assessment()
 
@@ -980,6 +1048,10 @@ async def get_requirement_assessments(
         if ref_id:
             params["ref_id"] = ref_id
 
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
         res = make_get_request("/requirement-assessments/", params=params)
 
         if res.status_code != 200:
@@ -991,9 +1063,20 @@ async def get_requirement_assessments(
         if not req_assessments:
             return "No requirement assessments found"
 
-        result = f"Found {len(req_assessments)} requirement assessments\n\n"
-        result += "|ID|Ref|Description|Requirement|Assessment|Status|Result|\n"
-        result += "|---|---|---|---|---|---|---|\n"
+        result = (
+            found_line(
+                req_assessments,
+                "requirement assessments",
+                paginated=True,
+                offset=offset,
+            )
+            + "\n\n"
+        )
+        result += "|ID|Ref|Description|Requirement|Assessment|Status|Result|Scored|Score|DocScore|TargetScore|\n"
+        result += "|---|---|---|---|---|---|---|---|---|---|---|\n"
+
+        def _fmt(value):
+            return "N/A" if value is None else value
 
         for req in req_assessments:
             req_id = req.get("id", "N/A")
@@ -1005,8 +1088,15 @@ async def get_requirement_assessments(
             )[:20]
             status = req.get("status", "N/A")
             result_val = req.get("result", "N/A")
+            is_scored = req.get("is_scored", False)
+            score = _fmt(req.get("score"))
+            documentation_score = _fmt(req.get("documentation_score"))
+            target_score = _fmt(req.get("target_score"))
 
-            result += f"|{req_id}|{req_ref_id}|{description}|{requirement}|{comp_assessment}|{status}|{result_val}|\n"
+            result += (
+                f"|{req_id}|{req_ref_id}|{description}|{requirement}|{comp_assessment}"
+                f"|{status}|{result_val}|{is_scored}|{score}|{documentation_score}|{target_score}|\n"
+            )
 
         return result
     except Exception as e:
@@ -1027,7 +1117,7 @@ async def get_quantitative_risk_studies():
         if not studies:
             return "No quantitative risk studies found"
 
-        result = f"Found {len(studies)} quantitative risk studies\n\n"
+        result = found_line(studies, "quantitative risk studies") + "\n\n"
         result += "|ID|Name|Status|Distribution Model|Loss Threshold|Folder|\n"
         result += "|---|---|---|---|---|---|\n"
 
@@ -1084,7 +1174,7 @@ async def get_quantitative_risk_scenarios(study_id_or_name: str = None):
         if not scenarios:
             return "No quantitative risk scenarios found"
 
-        result = f"Found {len(scenarios)} quantitative risk scenarios\n\n"
+        result = found_line(scenarios, "quantitative risk scenarios") + "\n\n"
         result += (
             "|ID|Ref|Name|Status|Priority|Current ALE|Residual ALE|Study|Folder|\n"
         )
@@ -1146,7 +1236,7 @@ async def get_quantitative_risk_hypotheses(scenario_id_or_name: str = None):
         if not hypotheses:
             return "No quantitative risk hypotheses found"
 
-        result = f"Found {len(hypotheses)} quantitative risk hypotheses\n\n"
+        result = found_line(hypotheses, "quantitative risk hypotheses") + "\n\n"
         result += "|ID|Ref|Name|Risk Stage|Selected|ALE|ROC|Fresh|Scenario|Folder|\n"
         result += "|---|---|---|---|---|---|---|---|---|---|\n"
 
@@ -1172,7 +1262,10 @@ async def get_quantitative_risk_hypotheses(scenario_id_or_name: str = None):
 async def get_task_templates(
     limit: int = None, offset: int = None, ordering: str = None, search: str = None
 ):
-    """List task templates with IDs, names, and details
+    """List many task templates (summary rows only)
+
+    Returns one row per template. For the full content of a single template,
+    call get_task_template_details with its ID instead.
 
     Args:
         limit: Number of results to return per page
@@ -1203,7 +1296,9 @@ async def get_task_templates(
         if not tasks:
             return "No task found"
 
-        result = f"Found {len(tasks)} task templates\n\n"
+        result = (
+            found_line(tasks, "task templates", paginated=True, offset=offset) + "\n\n"
+        )
         result += "|ID|Name|Description|Ref ID|Status|Recurrent|Enabled|Task Date|\n"
         result += "|---|---|---|---|---|---|---|---|\n"
 
@@ -1225,7 +1320,10 @@ async def get_task_templates(
 
 
 async def get_task_template_details(task_id: str):
-    """Get detailed information for a specific task template
+    """Get the full detail of ONE task template, by ID
+
+    Use this when the user asks about a specific named template. Use
+    get_task_templates to list many.
 
     Args:
         task_id: Task template ID
@@ -1248,7 +1346,6 @@ async def get_task_template_details(task_id: str):
         result += f"|{task.get('task_date', 'N/A')}"
         result += f"|{'Yes' if task.get('is_recurrent') else 'No'}"
         result += f"|{'Yes' if task.get('enabled') else 'No'}"
-        result += f"|{'Yes' if task.get('is_published') else 'No'}"
         result += f"|{task.get('link', 'N/A')}"
         result += f"|{task.get('folder', 'N/A')}"
         result += f"|{task.get('path', 'N/A')}"
@@ -1293,6 +1390,8 @@ async def get_vulnerabilities(
     status: str = None,
     severity: int = None,
     search: str = None,
+    limit: int = None,
+    offset: int = None,
 ):
     """List vulnerabilities with optional filters
 
@@ -1321,6 +1420,10 @@ async def get_vulnerabilities(
             params["search"] = search
             filters["search"] = search
 
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
         res = make_get_request("/vulnerabilities/", params=params)
 
         if res.status_code != 200:
@@ -1332,7 +1435,9 @@ async def get_vulnerabilities(
         if not vulnerabilities:
             return empty_response("vulnerabilities", filters)
 
-        result = f"Found {len(vulnerabilities)} vulnerabilities"
+        result = found_line(
+            vulnerabilities, "vulnerabilities", paginated=True, offset=offset
+        )
         if filters:
             result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
         result += "\n\n"
@@ -1429,4 +1534,159 @@ async def get_vulnerability(vulnerability_id: str):
     except Exception as e:
         return error_response(
             "Error", str(e), "Check the vulnerability ID and retry", retry_allowed=True
+        )
+
+
+async def get_asset_classes(
+    parent: str = None,
+    search: str = None,
+):
+    """List all asset classes with IDs and names
+
+    Args:
+        parent: Parent asset class UUID to filter by
+        search: Search term to filter results
+    """
+    try:
+        params = {}
+        filters = {}
+
+        if parent:
+            params["parent"] = parent
+            filters["parent"] = parent
+        if search:
+            params["search"] = search
+            filters["search"] = search
+
+        res = make_get_request("/asset-class/", params=params)
+
+        if res.status_code != 200:
+            return http_error_response(res.status_code, res.text)
+
+        data = res.json()
+        asset_classes = get_paginated_results(data)
+
+        if not asset_classes:
+            return empty_response("asset classes", filters)
+
+        result = found_line(asset_classes, "asset classes")
+        if filters:
+            result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
+        result += "\n\n"
+        result += "|ID|Name|Parent|\n"
+        result += "|---|---|---|\n"
+
+        for ac in asset_classes:
+            ac_id = ac.get("id", "N/A")
+            name = ac.get("name", "N/A")
+            parent_obj = ac.get("parent")
+            parent_name = (
+                parent_obj.get("str", "N/A")
+                if isinstance(parent_obj, dict)
+                else (parent_obj or "N/A")
+            )
+            result += f"|{ac_id}|{name}|{parent_name}|\n"
+
+        return success_response(
+            result,
+            "get_asset_classes",
+            "Use the asset class ID or name with update_asset to set the asset_class field",
+        )
+    except Exception as e:
+        return error_response(
+            "Internal Error",
+            str(e),
+            "Report this error to the user",
+            retry_allowed=False,
+        )
+
+
+async def get_users(
+    search: str = None,
+    email: str = None,
+    first_name: str = None,
+    last_name: str = None,
+    is_active: bool = None,
+    is_applied_control_owner: bool = None,
+    exclude_current: bool = None,
+):
+    """List user accounts with their User UUIDs, names and emails.
+
+    These are User ids, NOT Actor ids: owner/assignee fields (owner,
+    assigned_to, default_assignee) expect Actor ids. Pass an email or name
+    directly to those tools (it is resolved to the actor), or use
+    list_objects("actors") to get Actor UUIDs.
+
+    Args:
+        search: Search term (name or email)
+        email: Filter by email address
+        first_name: Filter by first name
+        last_name: Filter by last name
+        is_active: Filter by active status
+        is_applied_control_owner: Filter to users who are applied control owners
+        exclude_current: Exclude the currently authenticated user
+    """
+    try:
+        params = {}
+        filters = {}
+
+        if search:
+            params["search"] = search
+            filters["search"] = search
+        if email:
+            params["email"] = email
+            filters["email"] = email
+        if first_name:
+            params["first_name"] = first_name
+            filters["first_name"] = first_name
+        if last_name:
+            params["last_name"] = last_name
+            filters["last_name"] = last_name
+        if is_active is not None:
+            params["is_active"] = is_active
+            filters["is_active"] = is_active
+        if is_applied_control_owner is not None:
+            params["is_applied_control_owner"] = is_applied_control_owner
+            filters["is_applied_control_owner"] = is_applied_control_owner
+        if exclude_current is not None:
+            params["exclude_current"] = exclude_current
+
+        res = make_get_request("/users/", params=params)
+
+        if res.status_code != 200:
+            return http_error_response(res.status_code, res.text)
+
+        data = res.json()
+        users = get_paginated_results(data)
+
+        if not users:
+            return empty_response("users", filters)
+
+        result = found_line(users, "users")
+        if filters:
+            result += f" ({', '.join(f'{k}={v}' for k, v in filters.items())})"
+        result += "\n\n"
+        result += "|UUID|Email|First Name|Last Name|Active|\n"
+        result += "|---|---|---|---|---|\n"
+
+        for user in users:
+            user_id = user.get("id", "N/A")
+            user_email = user.get("email", "N/A")
+            first = user.get("first_name", "") or ""
+            last = user.get("last_name", "") or ""
+            active = user.get("is_active", "N/A")
+            result += f"|{user_id}|{user_email}|{first}|{last}|{active}|\n"
+
+        return success_response(
+            result,
+            "get_users",
+            "These are User ids, not Actor ids. To set owner/assigned_to/default_assignee, "
+            "pass the email or name directly, or get Actor UUIDs with list_objects('actors')",
+        )
+    except Exception as e:
+        return error_response(
+            "Internal Error",
+            str(e),
+            "Report this error to the user",
+            retry_allowed=False,
         )

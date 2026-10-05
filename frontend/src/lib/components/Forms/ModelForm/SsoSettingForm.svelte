@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import AutocompleteSelect from '$lib/components/Forms/AutocompleteSelect.svelte';
 	import Checkbox from '$lib/components/Forms/Checkbox.svelte';
 	import HiddenInput from '$lib/components/Forms/HiddenInput.svelte';
 	import RadioGroup from '$lib/components/Forms/RadioGroup.svelte';
@@ -80,6 +81,37 @@
 	<span class="text-orange-500 italic text-sm"
 		><i class="fa-solid fa-circle-exclamation mr-1"></i>{m.forceSSOLoginHelpText2()}</span
 	>
+	{#if page.data?.featureFlagSettings?.jit_provisioning}
+		<Checkbox
+			{form}
+			field="jit_provisioning_enabled"
+			label={m.enableJitProvisioning()}
+			helpText={m.enableJitProvisioningHelpText()}
+			disabled={!data.is_enabled}
+		/>
+		<AutocompleteSelect
+			{form}
+			multiple
+			optionsEndpoint="user-groups"
+			field="default_user_groups"
+			pathField="path"
+			cacheLock={cacheLocks['default_user_groups']}
+			bind:cachedValue={formDataCache['default_user_groups']}
+			label={m.defaultUserGroups()}
+			helpText={m.defaultUserGroupsHelpText()}
+			disabled={!data.is_enabled || !data.jit_provisioning_enabled}
+		/>
+		<span class="text-orange-500 italic text-sm"
+			><i class="fa-solid fa-circle-exclamation mr-1"></i>{m.defaultUserGroupsWarning()}</span
+		>
+	{/if}
+	<Checkbox
+		{form}
+		field="slo_enabled"
+		label={m.enableSpInitiatedSlo()}
+		helpText={m.enableSpInitiatedSloHelpText()}
+		disabled={!data.is_enabled}
+	/>
 	<RadioGroup
 		{form}
 		hidden={model.selectOptions['provider'].length < 2}
@@ -192,6 +224,24 @@
 						cacheLock={cacheLocks['oauth_pkce_enabled']}
 						helpText={m.oidcPKCEEnabledHelpText()}
 					/>
+					<TextField
+						{form}
+						field="additional_scopes"
+						label={m.oidcAdditionalScopes()}
+						disabled={!data.is_enabled}
+						cacheLock={cacheLocks['additional_scopes']}
+						helpText={m.oidcAdditionalScopesHelpText()}
+					/>
+					{#if page.data?.featureFlagSettings?.jit_provisioning}
+						<TextField
+							{form}
+							field="attribute_mapping_groups"
+							label={m.attributeMappingGroups()}
+							helpText={m.attributeMappingGroupsHelpText()}
+							disabled={!data.is_enabled}
+							cacheLock={cacheLocks['attribute_mapping_groups']}
+						/>
+					{/if}
 				</div>
 			</Accordion.ItemContent>
 		</Accordion.Item>
@@ -219,7 +269,7 @@
 						disabled={!data.is_enabled}
 						cacheLock={cacheLocks['idp_entity_id']}
 					/>
-					<p class="text-gray-600 text-sm">{m.fillMetadataURL()}</p>
+					<p class="text-surface-600-400 text-sm">{m.fillMetadataURL()}</p>
 					<TextField
 						{form}
 						field="metadata_url"
@@ -228,11 +278,11 @@
 						cacheLock={cacheLocks['metadata_url']}
 					/>
 					<div class="flex items-center justify-center w-full space-x-2">
-						<hr class="w-1/2 items-center bg-gray-200 border-0" />
-						<span class="flex items-center text-gray-600 text-sm">{m.or()}</span>
-						<hr class="w-1/2 items-center bg-gray-200 border-0" />
+						<hr class="w-1/2 items-center bg-surface-200-800 border-0" />
+						<span class="flex items-center text-surface-600-400 text-sm">{m.or()}</span>
+						<hr class="w-1/2 items-center bg-surface-200-800 border-0" />
 					</div>
-					<p class="text-gray-600 text-sm">{m.fillSSOSLOURLx509cert()}</p>
+					<p class="text-surface-600-400 text-sm">{m.fillSSOSLOURLx509cert()}</p>
 					<TextField
 						{form}
 						field="sso_url"
@@ -319,6 +369,16 @@
 						disabled={!data.is_enabled}
 						cacheLock={cacheLocks['attribute_mapping_email']}
 					/>
+					{#if page.data?.featureFlagSettings?.jit_provisioning}
+						<TextField
+							{form}
+							field="attribute_mapping_groups"
+							label={m.attributeMappingGroups()}
+							helpText={m.attributeMappingGroupsHelpText()}
+							disabled={!data.is_enabled}
+							cacheLock={cacheLocks['attribute_mapping_groups']}
+						/>
+					{/if}
 
 					<Checkbox
 						{form}

@@ -1,9 +1,8 @@
 <script lang="ts">
 	import AutocompleteSelect from '../AutocompleteSelect.svelte';
-	import FolderTreeSelect from '../FolderTreeSelect.svelte';
 	import TextField from '$lib/components/Forms/TextField.svelte';
-	import TextArea from '$lib/components/Forms/TextArea.svelte';
 	import MarkdownField from '$lib/components/Forms/MarkdownField.svelte';
+	import NumberField from '$lib/components/Forms/NumberField.svelte';
 	import Select from '../Select.svelte';
 	import type { SuperForm } from 'sveltekit-superforms';
 	import type { ModelInfo, CacheLock } from '$lib/utils/types';
@@ -30,80 +29,8 @@
 	}: Props = $props();
 
 	let isLocked = $derived(form.data?.is_locked || object?.is_locked || false);
-
-	let selectedFolder = $state<string | undefined>(undefined);
-	let folderKey = $state(0);
-	let isAutoFillingFolder = $state(false);
-
-	function handleFolderChange(folderId: string) {
-		selectedFolder = folderId;
-		// Clear perimeter when folder changes (unless we're auto-filling from perimeter)
-		if (!isAutoFillingFolder && form.data?.perimeter) {
-			form.form.update((currentData) => ({
-				...currentData,
-				perimeter: undefined
-			}));
-		}
-		isAutoFillingFolder = false;
-	}
-
-	async function handlePerimeterChange(perimeterId: string) {
-		if (perimeterId && !selectedFolder) {
-			// Fetch perimeter to get its folder and auto-fill
-			try {
-				const response = await fetch(`/perimeters/${perimeterId}`);
-				if (response.ok) {
-					const perimeter = await response.json();
-					if (perimeter.folder?.id) {
-						isAutoFillingFolder = true;
-						selectedFolder = perimeter.folder.id;
-						// Update form data and force folder component to re-render
-						form.form.update((currentData) => ({
-							...currentData,
-							folder: perimeter.folder.id
-						}));
-						folderKey++;
-					}
-				}
-			} catch (error) {
-				console.error('Error fetching perimeter:', error);
-			}
-		}
-	}
 </script>
 
-{#key folderKey}
-	<FolderTreeSelect
-		{form}
-		field="folder"
-		cacheLock={cacheLocks['folder']}
-		bind:cachedValue={formDataCache['folder']}
-		label={m.folder()}
-		onChange={handleFolderChange}
-		mount={handleFolderChange}
-	/>
-{/key}
-{#key selectedFolder}
-	<AutocompleteSelect
-		{form}
-		optionsEndpoint="perimeters"
-		optionsDetailedUrlParameters={selectedFolder ? [['folder', selectedFolder]] : []}
-		optionsExtraFields={[['folder', 'str']]}
-		field="perimeter"
-		nullable
-		cacheLock={cacheLocks['perimeter']}
-		bind:cachedValue={formDataCache['perimeter']}
-		label={m.perimeter()}
-		onChange={handlePerimeterChange}
-	/>
-{/key}
-<TextField
-	{form}
-	field="ref_id"
-	label={m.refId()}
-	cacheLock={cacheLocks['ref_id']}
-	bind:cachedValue={formDataCache['ref_id']}
-/>
 <TextField
 	{form}
 	field="version"
@@ -143,17 +70,6 @@
 	bind:cachedValue={formDataCache['authors']}
 	label={m.authors()}
 />
-<AutocompleteSelect
-	multiple
-	{form}
-	optionsEndpoint="evidences"
-	optionsExtraFields={[['folder', 'str']]}
-	optionsLabelField="auto"
-	field="evidences"
-	label={m.evidences()}
-	cacheLock={cacheLocks['evidences']}
-	bind:cachedValue={formDataCache['evidences']}
-/>
 <Dropdown open={false} style="hover:text-primary-700" icon="fa-solid fa-list" header={m.more()}>
 	<AutocompleteSelect
 		{form}
@@ -168,6 +84,22 @@
 		cacheLock={cacheLocks['reviewers']}
 		bind:cachedValue={formDataCache['reviewers']}
 		label={m.reviewers()}
+	/>
+	<MarkdownField
+		{form}
+		field="objectives"
+		label={m.objectives()}
+		helpText={m.findingsAssessmentObjectivesHelpText()}
+		cacheLock={cacheLocks['objectives']}
+		bind:cachedValue={formDataCache['objectives']}
+	/>
+	<TextField
+		type="date"
+		{form}
+		field="start_date"
+		label={m.startDate()}
+		cacheLock={cacheLocks['start_date']}
+		bind:cachedValue={formDataCache['start_date']}
 	/>
 	<TextField
 		type="date"
@@ -187,12 +119,60 @@
 		cacheLock={cacheLocks['due_date']}
 		bind:cachedValue={formDataCache['due_date']}
 	/>
+	<TextField
+		type="date"
+		{form}
+		field="reported_at"
+		label={m.reportedAt()}
+		helpText={m.reportedAtHelpText()}
+		cacheLock={cacheLocks['reported_at']}
+		bind:cachedValue={formDataCache['reported_at']}
+	/>
+	<NumberField
+		{form}
+		field="budget"
+		label={m.budget()}
+		min={0}
+		step={0.01}
+		cacheLock={cacheLocks['budget']}
+		bind:cachedValue={formDataCache['budget']}
+	/>
+	<NumberField
+		{form}
+		field="expenses"
+		label={m.expenses()}
+		helpText={m.expensesHelpText()}
+		min={0}
+		step={0.01}
+		cacheLock={cacheLocks['expenses']}
+		bind:cachedValue={formDataCache['expenses']}
+	/>
+	<TextField
+		{form}
+		field="reference_link"
+		label={m.referenceLink()}
+		helpText={m.linkHelpText()}
+		cacheLock={cacheLocks['reference_link']}
+		bind:cachedValue={formDataCache['reference_link']}
+	/>
 	<MarkdownField
 		{form}
 		field="observation"
 		label={m.observation()}
 		cacheLock={cacheLocks['observation']}
 		bind:cachedValue={formDataCache['observation']}
+	/>
+	<AutocompleteSelect
+		multiple
+		{form}
+		createFromSelection={true}
+		optionsEndpoint="filtering-labels"
+		optionsLabelField="label"
+		translateOptions={false}
+		field="filtering_labels"
+		helpText={m.labelsHelpText()}
+		label={m.labels()}
+		allowUserOptions="append"
 	/>
 	<Checkbox
 		{form}

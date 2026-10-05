@@ -16,6 +16,7 @@
 	} from '$lib/utils/datetime';
 	import { m } from '$paraglide/messages';
 	import { getLocale } from '$paraglide/runtime';
+	import { setTheme, type ThemeMode } from '$lib/utils/theme';
 	import { defaults } from 'sveltekit-superforms';
 	import { zod4 as zod } from 'sveltekit-superforms/adapters';
 	import { z } from 'zod';
@@ -28,6 +29,8 @@
 		type ModalStore
 	} from '$lib/components/Modals/stores';
 	import CreatePatModal from './pat/components/CreatePATModal.svelte';
+	import { getFeatureFlagGroups } from '$lib/utils/feature-flag-groups';
+	import FeatureFlagGroupList from '$lib/components/Forms/FeatureFlagGroupList.svelte';
 
 	interface Props {
 		data: PageData;
@@ -121,6 +124,140 @@
 		} catch {
 			dateFormat = previous;
 		}
+	}
+
+	const themeOptions: { value: ThemeMode; label: string }[] = [
+		{ value: 'light', label: m.themeLight() },
+		{ value: 'dark', label: m.themeDark() },
+		{ value: 'system', label: m.themeSystem() }
+	];
+
+	let theme = $state((page.data.user?.preferences?.ui?.theme as ThemeMode) ?? 'system');
+
+	const landingOptions = [
+		{ value: '', label: m.useOrganizationDefault() },
+		{ value: 'analytics', label: m.analytics() },
+		{ value: 'respondent', label: m.respondentMode() },
+		{ value: 'portal', label: m.portals() }
+	];
+	let landing = $state((page.data.user?.preferences?.ui?.landing as string) ?? '');
+
+	async function handleLandingChange(event: Event) {
+		const value = (event.target as HTMLSelectElement).value;
+		const previous = landing;
+		landing = value;
+		try {
+			const currentUi = page.data.user?.preferences?.ui ?? {};
+			const response = await fetch('/fe-api/user-preferences', {
+				method: 'PATCH',
+				body: JSON.stringify({ ui: { ...currentUi, landing: value } })
+			});
+			if (!response.ok) {
+				landing = previous;
+				return;
+			}
+			await invalidateAll();
+		} catch {
+			landing = previous;
+		}
+	}
+
+	// Derived, not read once: every toggle ends in `invalidateAll()`.
+	const hideableFlags: string[] = $derived(data.moduleVisibility?.hideable ?? []);
+	const moduleGroups = $derived(getFeatureFlagGroups(hideableFlags));
+
+	// Un-narrowed, so "your organisation disabled it" can be told apart from "you
+	// hid it" — false in `flags` either way.
+	const instanceFlags: Record<string, boolean> = $derived(data.moduleVisibility?.instance ?? {});
+
+	// Seeded once, then owned locally so a toggle paints before the round-trip.
+	let moduleVisible = $state(
+		Object.fromEntries(
+			(data.moduleVisibility?.hideable ?? []).map((flag: string) => [
+				flag,
+				!(data.moduleVisibility?.hidden ?? []).includes(flag)
+			])
+		)
+	);
+	// A count, not a flag: a toggle and a reset can overlap, and the backend merges
+	// each sparse PATCH read-modify-save, so a write started mid-flight can lose
+	// the first. Blocking every control while any is pending orders them.
+	let modulePendingWrites = $state(0);
+	const moduleBusy = $derived(modulePendingWrites > 0);
+
+	function availableOnInstance(flag: string): boolean {
+		return instanceFlags[flag] === true;
+	}
+
+	// Absent means visible: the stored form is sparse, and a flag added to
+	// `hideable` by a later refresh has no local value yet.
+	function isModuleVisible(flag: string): boolean {
+		return moduleVisible[flag] !== false;
+	}
+
+	// Both sides of the ratio count only what this user can act on, so someone who
+	// has hidden nothing reads "9 of 9" rather than a total they cannot reach.
+	const availableModuleCount = $derived(hideableFlags.filter(availableOnInstance).length);
+	const visibleModuleCount = $derived(
+		hideableFlags.filter((flag) => availableOnInstance(flag) && isModuleVisible(flag)).length
+	);
+
+	// What the reset would undo, hence not `visibleModuleCount === hideableFlags
+	// .length`: an organisation-disabled module is nothing this user can reset.
+	const hiddenByUserCount = $derived(
+		hideableFlags.filter((flag) => moduleVisible[flag] === false).length
+	);
+
+	async function saveModulePreferences(patch: Record<string, boolean>, rollback: () => void) {
+		modulePendingWrites += 1;
+		try {
+			let response: Response;
+			try {
+				response = await fetch('/fe-api/user-preferences', {
+					method: 'PATCH',
+					body: JSON.stringify({ feature_flags: patch })
+				});
+			} catch {
+				rollback();
+				return;
+			}
+			if (!response.ok) {
+				rollback();
+				return;
+			}
+			// Past this point the write landed, so a failed reload leaves the rest
+			// of the tree stale — rolling the toggle back would make it wrong.
+			// Sidebar, palette and flagged tables are built server-side from the
+			// effective flags, hence the reload at all.
+			await invalidateAll().catch(() => {});
+		} finally {
+			modulePendingWrites -= 1;
+		}
+	}
+
+	async function handleModuleChange(flag: string, visible: boolean) {
+		const previous = moduleVisible[flag];
+		moduleVisible[flag] = visible;
+		await saveModulePreferences({ [flag]: visible }, () => {
+			moduleVisible[flag] = previous;
+		});
+	}
+
+	async function resetModulesToOrganization() {
+		const previous = { ...moduleVisible };
+		// Every hideable flag sent as visible: the backend drops a `true` instead of
+		// storing it, so each one goes back to following the organization.
+		const patch = Object.fromEntries(hideableFlags.map((flag) => [flag, true]));
+		moduleVisible = patch;
+		await saveModulePreferences(patch, () => {
+			moduleVisible = previous;
+		});
+	}
+
+	// setTheme applies the theme immediately and persists it to the backend (ui.theme).
+	function handleThemeChange(event: Event) {
+		theme = (event.target as HTMLSelectElement).value as ThemeMode;
+		setTheme(theme);
 	}
 	function modalPATCreateForm(): void {
 		const modalComponent: ModalComponent = {
@@ -218,20 +355,25 @@
 		<Tabs.Trigger value="preferences"
 			><i class="fa-solid fa-sliders mr-2"></i>{m.preferencesSettings()}</Tabs.Trigger
 		>
+		{#if moduleGroups.length > 0}
+			<Tabs.Trigger value="modules"
+				><i class="fa-solid fa-table-cells-large mr-2"></i>{m.moduleVisibility()}</Tabs.Trigger
+			>
+		{/if}
 		<Tabs.Indicator />
 	</Tabs.List>
 	<Tabs.Content value="security">
 		<div class="p-4 flex flex-col space-y-4">
 			<div class="flex flex-col">
 				<h3 class="h3 font-medium">{m.securitySettings()}</h3>
-				<p class="text-sm text-surface-800">{m.securitySettingsDescription()}</p>
+				<p class="text-sm text-surface-800-200">{m.securitySettingsDescription()}</p>
 			</div>
 			<hr />
 			<div class="flow-root">
-				<dl class="-my-3 divide-y divide-surface-100 text-sm">
+				<dl class="-my-3 divide-y divide-surface-100-900 text-sm">
 					<div class="grid grid-cols-1 gap-1 py-3 sm:grid-cols-3 sm:gap-4">
 						<dt class="font-medium">{m.multiFactorAuthentication()}</dt>
-						<dd class="text-surface-900 sm:col-span-2">
+						<dd class="text-surface-900-100 sm:col-span-2">
 							<div class="card p-4 bg-inherit w-fit flex flex-col space-y-3">
 								<div class="flex flex-col space-y-2">
 									<span class="flex flex-row justify-between text-xl">
@@ -241,10 +383,10 @@
 										{/if}
 									</span>
 									<span class="flex flex-row space-x-2">
-										<h6 class="h6 base-font-color">{m.authenticatorApp()}</h6>
+										<h6 class="h6 text-typo-base-light">{m.authenticatorApp()}</h6>
 										<p class="badge h-fit preset-tonal-secondary">{m.recommended()}</p>
 									</span>
-									<p class="text-sm text-surface-800 max-w-[50ch]">
+									<p class="text-sm text-surface-800-200 max-w-[50ch]">
 										{m.authenticatorAppDescription()}
 									</p>
 								</div>
@@ -271,10 +413,10 @@
 						</dd>
 					</div>
 				</dl>
-				<dl class="-my-3 divide-y divide-surface-100 text-sm">
+				<dl class="-my-3 divide-y divide-surface-100-900 text-sm">
 					<div class="grid grid-cols-1 gap-1 py-3 sm:grid-cols-3 sm:gap-4">
 						<dt class="font-medium">{m.securityKeys()}</dt>
-						<dd class="text-surface-900 sm:col-span-2">
+						<dd class="text-surface-900-100 sm:col-span-2">
 							<div class="card p-4 bg-inherit w-fit flex flex-col space-y-3">
 								<div class="flex flex-col space-y-2">
 									<span class="flex flex-row justify-between text-xl">
@@ -284,9 +426,9 @@
 										{/if}
 									</span>
 									<span class="flex flex-row space-x-2">
-										<h6 class="h6 base-font-color">{m.securityKeys()}</h6>
+										<h6 class="h6 text-typo-base-light">{m.securityKeys()}</h6>
 									</span>
-									<p class="text-sm text-surface-800 max-w-[50ch]">
+									<p class="text-sm text-surface-800-200 max-w-[50ch]">
 										{m.securityKeyDescription()}
 									</p>
 								</div>
@@ -296,7 +438,7 @@
 											<li class="flex flex-row justify-between items-center card p-3 bg-inherit">
 												<span class="flex flex-col">
 													<p class="font-medium">{credential.name}</p>
-													<p class="text-xs text-surface-600">
+													<p class="text-xs text-surface-600-400">
 														{formatDate(new Date(credential.created_at * 1000), false, getLocale())}
 													</p>
 												</span>
@@ -311,7 +453,7 @@
 										{/each}
 									</ul>
 								{:else}
-									<p class="text-sm text-surface-600">{m.noSecurityKeysRegistered()}</p>
+									<p class="text-sm text-surface-600-400">{m.noSecurityKeysRegistered()}</p>
 								{/if}
 								<div class="flex flex-wrap gap-2">
 									{#if data.webauthnCreationOptions}
@@ -328,10 +470,10 @@
 					</div>
 				</dl>
 				{#if data.patAllowed}
-					<dl class="-my-3 divide-y divide-surface-100 text-sm">
+					<dl class="-my-3 divide-y divide-surface-100-900 text-sm">
 						<div class="grid grid-cols-1 gap-1 py-3 sm:grid-cols-3 sm:gap-4">
 							<dt class="font-medium">{m.personalAccessTokens()}</dt>
-							<dd class="text-surface-900 sm:col-span-2">
+							<dd class="text-surface-900-100 sm:col-span-2">
 								<div class="card p-4 bg-inherit w-fit flex flex-col space-y-3">
 									<div class="flex flex-col space-y-2">
 										<span class="flex flex-row justify-between text-xl">
@@ -343,11 +485,11 @@
 										<span class="flex flex-row space-x-2">
 											<h6 class="h6 text-token">{m.personalAccessTokens()}</h6>
 										</span>
-										<p class="text-sm text-surface-800 max-w-[65ch]">
+										<p class="text-sm text-surface-800-200 max-w-[65ch]">
 											{m.personalAccessTokensDescription()}
 										</p>
 										<div class="card p-4 preset-tonal-warning max-w-[65ch]">
-											<i class="fa-solid fa-warning mr-2 text-warning-900"></i>
+											<i class="fa-solid fa-warning mr-2 text-warning-900-5"></i>
 											{m.personalAccessTokenCreateWarning()}
 										</div>
 									</div>
@@ -394,16 +536,36 @@
 		<div class="p-4 flex flex-col space-y-4">
 			<div class="flex flex-col">
 				<h3 class="h3 font-medium">{m.preferencesSettings()}</h3>
-				<p class="text-sm text-surface-800">{m.preferencesSettingsDescription()}</p>
+				<p class="text-sm text-surface-800-200">{m.preferencesSettingsDescription()}</p>
 			</div>
 			<hr />
 			<div class="flow-root">
-				<dl class="-my-3 divide-y divide-surface-100 text-sm">
+				<dl class="-my-3 divide-y divide-surface-100-900 text-sm">
+					<div class="grid grid-cols-1 gap-1 py-3 sm:grid-cols-3 sm:gap-4">
+						<dt class="font-medium">{m.theme()}</dt>
+						<dd class="text-surface-900-100 sm:col-span-2">
+							<div class="flex flex-col space-y-2 max-w-[40ch]">
+								<p class="text-sm text-surface-800-200">{m.themeDescription()}</p>
+								<select
+									class="select"
+									data-testid="theme-select"
+									value={theme}
+									onchange={handleThemeChange}
+								>
+									{#each themeOptions as option}
+										<option value={option.value}>{option.label}</option>
+									{/each}
+								</select>
+							</div>
+						</dd>
+					</div>
+				</dl>
+				<dl class="-my-3 divide-y divide-surface-100-900 text-sm">
 					<div class="grid grid-cols-1 gap-1 py-3 sm:grid-cols-3 sm:gap-4">
 						<dt class="font-medium">{m.dateFormat()}</dt>
-						<dd class="text-surface-900 sm:col-span-2">
+						<dd class="text-surface-900-100 sm:col-span-2">
 							<div class="flex flex-col space-y-2 max-w-[40ch]">
-								<p class="text-sm text-surface-800">{m.dateFormatDescription()}</p>
+								<p class="text-sm text-surface-800-200">{m.dateFormatDescription()}</p>
 								<select
 									class="select"
 									data-testid="date-format-select"
@@ -414,9 +576,24 @@
 										<option value={option.value}>{option.label}</option>
 									{/each}
 								</select>
-								<p class="text-xs text-surface-600">
+								<p class="text-xs text-surface-600-400">
 									{sampleDateForPreference(dateFormat, getLocale())}
 								</p>
+							</div>
+						</dd>
+					</div>
+				</dl>
+				<dl class="-my-3 divide-y divide-surface-100-900 text-sm">
+					<div class="grid grid-cols-1 gap-1 py-3 sm:grid-cols-3 sm:gap-4">
+						<dt class="font-medium">{m.defaultLanding()}</dt>
+						<dd class="text-surface-900-100 sm:col-span-2">
+							<div class="flex flex-col space-y-2 max-w-[40ch]">
+								<p class="text-sm text-surface-800-200">{m.defaultLandingHelpText()}</p>
+								<select class="select" value={landing} onchange={handleLandingChange}>
+									{#each landingOptions as option}
+										<option value={option.value}>{option.label}</option>
+									{/each}
+								</select>
 							</div>
 						</dd>
 					</div>
@@ -424,4 +601,41 @@
 			</div>
 		</div>
 	</Tabs.Content>
+	{#if moduleGroups.length > 0}
+		<Tabs.Content value="modules">
+			<div class="p-4 flex flex-col space-y-4">
+				<div class="flex flex-col">
+					<h3 class="h3 font-medium">{m.moduleVisibility()}</h3>
+					<p class="text-sm text-surface-800-200">{m.moduleVisibilityDescription()}</p>
+				</div>
+				<hr />
+				<div class="flex flex-wrap items-center gap-3">
+					<span class="text-sm text-surface-600-400">
+						{m.modulesVisibleCount({
+							count: visibleModuleCount,
+							total: availableModuleCount
+						})}
+					</span>
+					<button
+						type="button"
+						class="btn btn-sm preset-tonal ml-auto"
+						data-testid="reset-module-visibility"
+						disabled={moduleBusy || hiddenByUserCount === 0}
+						onclick={resetModulesToOrganization}
+					>
+						<i class="fa-solid fa-rotate-left mr-1"></i>{m.resetToOrganizationSettings()}
+					</button>
+				</div>
+				<FeatureFlagGroupList
+					groups={moduleGroups}
+					accent="tertiary"
+					isEnabled={(field) => availableOnInstance(field) && isModuleVisible(field)}
+					isDisabled={(field) => !availableOnInstance(field) || moduleBusy}
+					tooltipFor={(field) =>
+						availableOnInstance(field) ? undefined : m.moduleDisabledByOrganization()}
+					onToggle={handleModuleChange}
+				/>
+			</div>
+		</Tabs.Content>
+	{/if}
 </Tabs>

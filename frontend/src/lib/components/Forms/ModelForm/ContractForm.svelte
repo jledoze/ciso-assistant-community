@@ -1,12 +1,12 @@
 <script lang="ts">
 	import AutocompleteSelect from '../AutocompleteSelect.svelte';
-	import FolderTreeSelect from '../FolderTreeSelect.svelte';
 	import TextField from '$lib/components/Forms/TextField.svelte';
 	import NumberField from '$lib/components/Forms/NumberField.svelte';
 	import Checkbox from '$lib/components/Forms/Checkbox.svelte';
 	import Dropdown from '$lib/components/Dropdown/Dropdown.svelte';
 	import type { SuperValidated } from 'sveltekit-superforms';
 	import type { ModelInfo, CacheLock } from '$lib/utils/types';
+	import { page } from '$app/stores';
 	import { m } from '$paraglide/messages';
 
 	interface Props {
@@ -26,22 +26,10 @@
 		initialData = {},
 		object = {}
 	}: Props = $props();
+
+	let doraEnabled = $derived(!!$page.data?.featureflags?.dora);
 </script>
 
-<FolderTreeSelect
-	{form}
-	field="folder"
-	cacheLock={cacheLocks['folder']}
-	bind:cachedValue={formDataCache['folder']}
-	label={m.domain()}
-/>
-<TextField
-	{form}
-	field="ref_id"
-	label={m.refId()}
-	cacheLock={cacheLocks['ref_id']}
-	bind:cachedValue={formDataCache['ref_id']}
-/>
 <AutocompleteSelect
 	{form}
 	field="status"
@@ -50,15 +38,17 @@
 	bind:cachedValue={formDataCache['status']}
 	label={m.status()}
 />
-<AutocompleteSelect
-	{form}
-	field="dora_contractual_arrangement"
-	options={model.selectOptions?.dora_contractual_arrangement}
-	label={m.doraContractualArrangement()}
-	nullable={false}
-	cacheLock={cacheLocks['dora_contractual_arrangement']}
-	bind:cachedValue={formDataCache['dora_contractual_arrangement']}
-/>
+{#if doraEnabled}
+	<AutocompleteSelect
+		{form}
+		field="dora_contractual_arrangement"
+		options={model.selectOptions?.dora_contractual_arrangement}
+		label={m.doraContractualArrangement()}
+		nullable={false}
+		cacheLock={cacheLocks['dora_contractual_arrangement']}
+		bind:cachedValue={formDataCache['dora_contractual_arrangement']}
+	/>
+{/if}
 <TextField
 	type="date"
 	{form}
@@ -78,6 +68,7 @@
 <AutocompleteSelect
 	{form}
 	optionsEndpoint="entities"
+	optionsExtraFields={[['folder', 'str']]}
 	field="provider_entity"
 	cacheLock={cacheLocks['provider_entity']}
 	bind:cachedValue={formDataCache['provider_entity']}
@@ -86,6 +77,7 @@
 <AutocompleteSelect
 	{form}
 	optionsEndpoint="entities"
+	optionsExtraFields={[['folder', 'str']]}
 	field="beneficiary_entity"
 	cacheLock={cacheLocks['beneficiary_entity']}
 	bind:cachedValue={formDataCache['beneficiary_entity']}
@@ -162,6 +154,7 @@
 	<NumberField
 		{form}
 		field="annual_expense"
+		step="any"
 		label={m.annualExpense()}
 		cacheLock={cacheLocks['annual_expense']}
 		bind:cachedValue={formDataCache['annual_expense']}
@@ -203,11 +196,13 @@
 		cacheLock={cacheLocks['is_intragroup']}
 		bind:cachedValue={formDataCache['is_intragroup']}
 	/>
-	<Checkbox
-		{form}
-		field="dora_exclude"
-		label={m.doraExclude()}
-		cacheLock={cacheLocks['dora_exclude']}
-		bind:cachedValue={formDataCache['dora_exclude']}
-	/>
+	{#if doraEnabled}
+		<Checkbox
+			{form}
+			field="dora_exclude"
+			label={m.doraExclude()}
+			cacheLock={cacheLocks['dora_exclude']}
+			bind:cachedValue={formDataCache['dora_exclude']}
+		/>
+	{/if}
 </Dropdown>

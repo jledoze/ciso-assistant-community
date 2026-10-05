@@ -1,6 +1,5 @@
 <script lang="ts">
 	import AutocompleteSelect from '../AutocompleteSelect.svelte';
-	import FolderTreeSelect from '../FolderTreeSelect.svelte';
 	import Select from '$lib/components/Forms/Select.svelte';
 	import type { SuperForm } from 'sveltekit-superforms';
 	import type { ModelInfo, CacheLock } from '$lib/utils/types';
@@ -27,14 +26,6 @@
 	const formStore = form.form;
 </script>
 
-<FolderTreeSelect
-	{form}
-	field="folder"
-	cacheLock={cacheLocks['folder']}
-	bind:cachedValue={formDataCache['folder']}
-	label={m.folder()}
-	hidden
-/>
 {#if !initialData['operating_mode']}
 	<AutocompleteSelect
 		{form}
@@ -49,12 +40,6 @@
 <AutocompleteSelect
 	{form}
 	optionsEndpoint="elementary-actions"
-	optionsDetailedUrlParameters={$formStore.operating_mode
-		? [
-				['operating_mode_available_actions', $formStore.operating_mode],
-				...(object?.id ? [['exclude_kill_chain', object.id]] : [])
-			]
-		: undefined}
 	optionsInfoFields={{
 		fields: [
 			{
@@ -77,35 +62,34 @@
 <!-- 	cacheLock={cacheLocks['is_highlighted']} -->
 <!-- 	bind:cachedValue={formDataCache['is_highlighted']} -->
 <!-- /> -->
-{#key $formStore.elementary_action}
-	<AutocompleteSelect
-		{form}
-		optionsEndpoint="elementary-actions"
-		optionsDetailedUrlParameters={$formStore.operating_mode
-			? [
-					['operating_mode_available_antecedents', $formStore.operating_mode],
-					...($formStore?.elementary_action
-						? [['actual_action', $formStore.elementary_action]]
-						: [])
-				]
+<AutocompleteSelect
+	{form}
+	optionsEndpoint="kill-chains"
+	optionsDetailedUrlParameters={object?.id
+		? [['available_antecedents_for', object.id]]
+		: $formStore.operating_mode
+			? [['operating_mode', $formStore.operating_mode]]
 			: undefined}
-		optionsInfoFields={{
-			fields: [
-				{
-					field: 'attack_stage',
-					translate: true
-				}
-			],
-			classes: 'text-yellow-700'
-		}}
-		multiple
-		field="antecedents"
-		cacheLock={cacheLocks['antecedents']}
-		helpText={m.antecedentsHelpText()}
-		bind:cachedValue={formDataCache['antecedents']}
-		label={m.antecedents()}
-	/>
-{/key}
+	optionsLabelField="str"
+	multiple
+	field="antecedents"
+	cacheLock={cacheLocks['antecedents']}
+	helpText={m.antecedentsHelpText()}
+	bind:cachedValue={formDataCache['antecedents']}
+	label={m.antecedents()}
+/>
+<AutocompleteSelect
+	multiple
+	{form}
+	optionsEndpoint="assets?type=SP"
+	optionsLabelField="auto"
+	optionsExtraFields={[['folder', 'str']]}
+	field="assets"
+	cacheLock={cacheLocks['assets']}
+	bind:cachedValue={formDataCache['assets']}
+	label={m.supportingAssets()}
+	helpText={m.killChainAssetsHelpText()}
+/>
 <Select
 	{form}
 	options={model.selectOptions['logic_operator']}

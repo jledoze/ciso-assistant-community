@@ -1,17 +1,21 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { urlModelForDjangoName } from '$lib/utils/crud';
 	import Anchor from '$lib/components/Anchor/Anchor.svelte';
 	import List from '$lib/components/List/List.svelte';
 	import BatchCreatePersonalDataModal from '$lib/components/Modals/BatchCreatePersonalDataModal.svelte';
+	import BatchAddAssetAssessmentsModal from '$lib/components/Modals/BatchAddAssetAssessmentsModal.svelte';
 	import ConfirmModal from '$lib/components/Modals/ConfirmModal.svelte';
 	import RiskAcceptanceModal from '$lib/components/Modals/RiskAcceptanceModal.svelte';
 	import CreateModal from '$lib/components/Modals/CreateModal.svelte';
 	import SelectExistingModal from '$lib/components/Modals/SelectExistingModal.svelte';
 	import ModelTable from '$lib/components/ModelTable/ModelTable.svelte';
+	import CustomFieldsDisplay from '$lib/components/Forms/CustomFieldsDisplay.svelte';
+	import { hasRelationGraph } from '$lib/components/RelationsGraph/relations';
 	import { booleanDisplay } from '$lib/utils/boolean-display';
-	import { ISO_8601_REGEX } from '$lib/utils/constants';
+	import { DATE_FIELDS_TO_FORMAT, ISO_8601_REGEX } from '$lib/utils/constants';
 	import { type ModelMapEntry, type ReverseForeignKeyField } from '$lib/utils/crud';
-	import { getModelInfo } from '$lib/utils/crud.js';
+	import { getModelInfo, getMarkdownFields, isFieldFlagEnabled } from '$lib/utils/crud';
 	import { formatDate, formatDateOrDateTime } from '$lib/utils/datetime';
 	import { isURL } from '$lib/utils/helpers';
 	import { safeTranslate } from '$lib/utils/i18n';
@@ -24,20 +28,47 @@
 
 	import { onMount } from 'svelte';
 
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import MarkdownRenderer from '$lib/components/MarkdownRenderer.svelte';
 	import { getListViewFields } from '$lib/utils/table';
-	import { canPerformAction } from '$lib/utils/access-control';
+	import { canPerformActionOnObject, resolveObjectDomain } from '$lib/utils/access-control';
+	import AuditTrailButton from '$lib/components/AuditTrail/AuditTrailButton.svelte';
 	import {
 		getModalStore,
 		type ModalComponent,
 		type ModalSettings,
 		type ModalStore
 	} from '$lib/components/Modals/stores';
+	import { getToastStore } from '$lib/components/Toast/stores';
 
 	const modalStore: ModalStore = getModalStore();
+	const toastStore = getToastStore();
 
-	const defaultExcludes = ['id', 'is_published', 'str', 'path', 'sync_mappings'];
+	const defaultExcludes = ['id', 'str', 'path', 'sync_mappings'];
+
+	// Format the raw numbers of the ROSI explanation per the active locale.
+	function formatRosiExplanationParams(params: Record<string, number> | undefined) {
+		if (!params) return {};
+		const locale = getLocale();
+		const amount = (value: number) =>
+			new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(
+				value
+			);
+		const percent = (value: number) =>
+			new Intl.NumberFormat(locale, {
+				style: 'percent',
+				minimumFractionDigits: 1,
+				maximumFractionDigits: 1
+			}).format(value);
+		return {
+			currentAle: amount(params.currentAle),
+			residualAle: amount(params.residualAle),
+			riskReduction: amount(params.riskReduction),
+			treatmentCost: amount(params.treatmentCost),
+			netBenefit: amount(params.netBenefit),
+			rosi: percent(params.rosi)
+		};
+	}
 
 	interface Props {
 		data: any;
@@ -47,6 +78,9 @@
 		displayModelTable?: boolean;
 		dateFieldsToFormat?: string[];
 		widgets?: import('svelte').Snippet;
+		/** Lets a caller keep the widget column out of the layout when its only
+		 * widget is behind a feature flag that is off. */
+		widgetsEnabled?: boolean;
 		actions?: import('svelte').Snippet;
 		disableCreate?: boolean;
 		disableEdit?: boolean;
@@ -59,26 +93,9 @@
 		fields = [],
 		exclude = $bindable([]),
 		displayModelTable = true,
-		dateFieldsToFormat = [
-			'created_at',
-			'updated_at',
-			'expiry_date',
-			'accepted_at',
-			'rejected_at',
-			'revoked_at',
-			'eta',
-			'expiration_date',
-			'validation_deadline',
-			'timestamp',
-			'reported_at',
-			'occurred_at',
-			'resolved_at',
-			'due_date',
-			'start_date',
-			'closing_date',
-			'commission_date'
-		],
+		dateFieldsToFormat = DATE_FIELDS_TO_FORMAT,
 		widgets,
+		widgetsEnabled = true,
 		actions,
 		disableCreate = false,
 		disableEdit = false,
@@ -87,17 +104,45 @@
 
 	exclude = [...exclude, ...defaultExcludes];
 
+	const markdownFieldSet = $derived(getMarkdownFields(data.urlModel));
+
+	// Fields whose serialized value is a stable code (e.g. "eba_TA:S02") or an
+	// English choice label (e.g. "Low reliance") that safeTranslate can map to a
+	// message key. Countries (data_location_*) are excluded on purpose: their
+	// ~250 labels have no message keys.
+	const translatedValueFieldSet = new Set([
+		'kind',
+		'status',
+		'roc_display',
+		'dora_ict_service_type',
+		'dora_data_sensitiveness',
+		'dora_reliance_level',
+		'dora_substitutability',
+		'dora_non_substitutability_reason',
+		'dora_has_exit_plan',
+		'dora_reintegration_possibility',
+		'dora_discontinuing_impact',
+		'dora_alternative_providers_identified'
+	]);
+
 	const getRelatedModelIndex = (model: ModelMapEntry, relatedModel: Record<string, string>) => {
 		if (!model.reverseForeignKeyFields) return -1;
 		return model.reverseForeignKeyFields.findIndex((o) => o.urlModel === relatedModel.urlModel);
 	};
 
+	// A field declared in flaggedFields disappears with its feature flag.
+	let visibleDetailViewFields = $derived(
+		data.model?.detailViewFields?.filter((fieldConfig) => {
+			const flag = data.model?.flaggedFields?.[fieldConfig.field];
+			return isFieldFlagEnabled(flag, page.data?.featureflags ?? {});
+		})
+	);
+
 	let filteredData = $derived(
-		data.model?.detailViewFields
+		visibleDetailViewFields
 			? Object.fromEntries(
 					Object.entries(data.data).filter(
-						([key, _]) =>
-							data.model.detailViewFields.filter((field) => field.field === key).length > 0
+						([key, _]) => visibleDetailViewFields.filter((field) => field.field === key).length > 0
 					)
 				)
 			: data.data
@@ -105,9 +150,9 @@
 
 	// Get ordered entries based on detailViewFields configuration
 	let orderedEntries = $derived(() => {
-		if (data.model?.detailViewFields) {
+		if (visibleDetailViewFields) {
 			// Return entries in the order specified by detailViewFields
-			return data.model.detailViewFields
+			return visibleDetailViewFields
 				.map((fieldConfig) => [fieldConfig.field, data.data[fieldConfig.field]])
 				.filter(([key, value]) => value !== undefined);
 		} else {
@@ -121,7 +166,7 @@
 		return data.model?.detailViewFields?.find((field) => field.field === fieldName);
 	};
 
-	let hasWidgets = $derived(!!widgets);
+	let hasWidgets = $derived(!!widgets && widgetsEnabled);
 	let relatedFieldNames = $derived(
 		new Set(data.model?.foreignKeyFields?.map((field) => field.field) ?? [])
 	);
@@ -187,6 +232,19 @@
 		modalStore.trigger(modal);
 	}
 
+	// Table-scoped batch actions for a reverse-FK table, gated by change on the
+	// parent object (so parent_action entries are only offered to users the
+	// parent endpoint would authorize). parent_action endpoints are resolved
+	// here — the only place that knows the parent url and id.
+	function tableBatchActions(field: ReverseForeignKeyField) {
+		if (!field.tableBatchActions || !canEditObject) return [];
+		return field.tableBatchActions.map((a) =>
+			a.type === 'parent_action'
+				? { ...a, endpoint: `/${data.model.urlModel}/${data.data.id}/${a.action}` }
+				: a
+		);
+	}
+
 	function modalSelectExisting(field: ReverseForeignKeyField): void {
 		if (!field.addExisting || !data.updateForm) return;
 		const addExisting = field.addExisting;
@@ -210,12 +268,18 @@
 		modalStore.trigger(modal);
 	}
 
+	const batchCreateModals: Record<string, ModalComponent['ref']> = {
+		'personal-data': BatchCreatePersonalDataModal,
+		'asset-assessments': BatchAddAssetAssessmentsModal
+	};
+
 	function modalBatchCreate(field: ReverseForeignKeyField, parentId: string): void {
-		if (!field.batchCreate) return;
+		const ref = batchCreateModals[field.urlModel];
+		if (!field.batchCreate || !ref) return;
 		const modalComponent: ModalComponent = {
-			ref: BatchCreatePersonalDataModal,
+			ref,
 			props: {
-				processingId: parentId,
+				parentId,
 				urlModel: field.urlModel
 			}
 		};
@@ -339,15 +403,25 @@
 	}
 
 	const user = page.data.user;
-	const canEditObject: boolean = canPerformAction({
-		user,
-		action: 'change',
-		model: data.model.name,
-		domain:
-			data.model.name === 'folder'
-				? data.data.id
-				: (data.data.folder?.id ?? data.data.folder ?? user.root_folder_id)
-	});
+	const objectDomain: string = $derived(
+		resolveObjectDomain(data.model.name, data.data) ?? user.root_folder_id
+	);
+	// Same helper as ModelTable/TableRowActions so edit affordances agree everywhere,
+	// including the no-folder fallback (existential check deferring to the backend).
+	const canEditObject: boolean = $derived(
+		canPerformActionOnObject({
+			user,
+			action: 'change',
+			model: data.model.name,
+			object: data.data
+		})
+	);
+
+	let relationsOpen = $state(false);
+	// Here rather than an `actions` snippet: most models ship their own detail route.
+	const showRelations = $derived(
+		Boolean(page.data?.featureflags?.relations_graph) && hasRelationGraph(data.urlModel)
+	);
 
 	let displayEditButton = $derived(function () {
 		return (
@@ -372,6 +446,16 @@
 	let group = $state(
 		Object.keys(data?.relatedModels ?? {}).length > 0 ? getSortedRelatedModels()[0][0] : undefined
 	);
+	// Tabs.Content renders hidden panels too, so gate on first visit. Kept once
+	// visited, so switching back costs no refetch. Reassigned: a Set is not deep state.
+	let visitedTabs = $state(
+		new Set(
+			Object.keys(data?.relatedModels ?? {}).length > 0 ? [getSortedRelatedModels()[0][0]] : []
+		)
+	);
+	$effect(() => {
+		if (group && !visitedTabs.has(group)) visitedTabs = new Set(visitedTabs).add(group);
+	});
 	$effect(() => {
 		const newRelatedModelsNames = new Set(relatedModels.map((model) => model[0]));
 
@@ -382,7 +466,9 @@
 
 		if (setsAreDifferent) {
 			relatedModelsNames = newRelatedModelsNames;
-			group = relatedModelsNames.size > 0 ? relatedModels[0][0] : undefined;
+			const firstTab = relatedModelsNames.size > 0 ? relatedModels[0][0] : undefined;
+			group = firstTab;
+			visitedTabs = new Set(firstTab ? [firstTab] : []);
 		}
 	});
 
@@ -415,16 +501,18 @@
 	<!-- Warning for non-visible objects (only for users with edit permissions) -->
 
 	{#if data.urlModel === 'risk-acceptances' && data.data.state === 'Created'}
-		<div class="flex flex-row items-center bg-yellow-100 rounded-container shadow-sm px-6 py-2">
-			<div class="text-yelloW-900">
+		<div
+			class="flex flex-row items-center bg-yellow-100 dark:bg-yellow-900 rounded-container shadow-sm px-6 py-2"
+		>
+			<div class="text-yellow-800 dark:text-yellow-200">
 				{m.riskAcceptanceNotYetSubmittedMessage()}
 			</div>
 		</div>
 	{:else if data.data.state === 'Submitted' && page.data.user.id === data.data.approver?.id}
 		<div
-			class="flex flex-row space-x-4 items-center bg-yellow-100 rounded-container shadow-sm px-6 py-2 justify-between"
+			class="flex flex-row space-x-4 items-center bg-yellow-100 dark:bg-yellow-900 rounded-container shadow-sm px-6 py-2 justify-between"
 		>
-			<div class="text-yellow-900">
+			<div class="text-yellow-800 dark:text-yellow-200">
 				{m.riskAcceptanceValidatingReviewMessage()}
 			</div>
 			<div class="flex space-x-2">
@@ -448,9 +536,9 @@
 		</div>
 	{:else if data.data.state === 'Accepted'}
 		<div
-			class="flex flex-row items-center space-x-4 bg-green-100 rounded-container shadow-lg px-6 py-2 mt-2 justify-between"
+			class="flex flex-row items-center space-x-4 bg-green-100 dark:bg-green-900 rounded-container shadow-lg px-6 py-2 mt-2 justify-between"
 		>
-			<div class="text-green-900">
+			<div class="text-green-800 dark:text-green-200">
 				{m.riskAcceptanceValidatedMessage()}
 			</div>
 			{#if page.data.user.id === data.data.approver?.id}
@@ -469,7 +557,7 @@
 	{/if}
 
 	<!-- Main content area - modified to use conditional flex layout -->
-	<div class="card shadow-lg bg-white p-4">
+	<div class="card shadow-lg bg-surface-50-950 p-4">
 		{#if data.urlModel === 'stakeholders' && data.data?.ebios_rm_study?.id}
 			<div class="mb-4 p-3">
 				<Anchor
@@ -502,22 +590,23 @@
 		<div class={hasWidgets ? 'flex flex-row flex-wrap gap-4' : 'w-full'}>
 			<!-- Left side - Details (conditional width) -->
 			<div
-				class="flow-root rounded-lg border border-gray-100 py-3 shadow-xs {hasWidgets
+				class="flow-root rounded-lg border border-surface-100-900 py-3 shadow-xs {hasWidgets
 					? 'flex-1 min-w-[300px]'
 					: 'w-full'}"
 			>
-				<dl class="-my-3 divide-y divide-gray-100 text-sm">
+				<dl class="-my-3 divide-y divide-surface-100-900 text-sm">
 					{#each orderedEntries().filter(([key, _]) => (fields.length > 0 ? fields.includes(key) : true) && !exclude.includes(key)) as [key, value], index}
 						{@const isRelatedField = relatedFieldNames.has(key)}
 						{@const hiddenCountForValue = isRelatedField ? countMasked(value) : 0}
 						<div
-							class="grid grid-cols-1 gap-1 py-3 px-2 even:bg-surface-50 sm:grid-cols-5 sm:gap-4 {index >=
+							class="grid grid-cols-1 gap-1 py-3 px-2 even:bg-surface-100-900 sm:grid-cols-5 sm:gap-4 {index >=
 								MAX_ROWS && !expandedTable
 								? 'hidden'
 								: ''}"
 						>
+							<!-- Keys column -->
 							<dt
-								class="font-medium text-gray-900 flex items-center gap-2"
+								class="font-medium text-surface-950-50 flex items-center gap-2"
 								data-testid="{key.replace('_', '-')}-field-title"
 							>
 								<span>{safeTranslate(key)}</span>
@@ -532,7 +621,7 @@
 										</Tooltip.Trigger>
 										<Tooltip.Positioner>
 											<Tooltip.Content
-												class="card bg-gray-800 text-white p-3 max-w-xs shadow-xl border border-gray-700"
+												class="card bg-surface-950-50 text-white p-3 max-w-xs shadow-xl border border-surface-700-300"
 											>
 												<p class="text-sm">{tooltipText}</p>
 											</Tooltip.Content>
@@ -540,7 +629,8 @@
 									</Tooltip>
 								{/if}
 							</dt>
-							<dd class="text-gray-700 sm:col-span-4">
+							<!-- Value column -->
+							<dd class="text-surface-700-300 sm:col-span-4">
 								<ul class="">
 									<li
 										class="list-none whitespace-pre-line"
@@ -588,7 +678,7 @@
 																{:else if val.str}
 																	{safeTranslate(val.str)}
 																{:else}
-																	{value}
+																	{val}
 																{/if}
 															</li>
 														{/each}
@@ -609,6 +699,7 @@
 												{:else}
 													--
 												{/if}
+												<!-- Values that are Arrays -->
 											{:else if Array.isArray(value)}
 												{@const visibleValues = isRelatedField
 													? value.filter((item) => !isMaskedPlaceholder(item))
@@ -620,7 +711,23 @@
 															return safeTranslate(a.str || a).localeCompare(safeTranslate(b.str || b));
 														}) as val}
 															<li data-testid={key.replace('_', '-') + '-field-value'}>
-																{#if key === 'purposes'}
+																{#if key === 'produced_from'}
+																	{@const producedUrlModel = urlModelForDjangoName(val.model)}
+																	{#if producedUrlModel}
+																		<Anchor
+																			breadcrumbAction="push"
+																			href={`/${producedUrlModel}/${val.id}`}
+																			class="anchor">{val.str}</Anchor
+																		>
+																	{:else}
+																		{val.str}
+																	{/if}
+																	{#if val.source}
+																		<span class="text-surface-600-400 text-xs">
+																			— {val.source}</span
+																		>
+																	{/if}
+																{:else if key === 'purposes'}
 																	{@const itemHref = `/${
 																		data.model?.foreignKeyFields?.find((item) => item.field === key)
 																			?.urlModel ?? 'purposes'
@@ -629,7 +736,7 @@
 																		>{val.name}</Anchor
 																	>
 																	{#if val.legal_basis}
-																		<span class="text-gray-600">
+																		<span class="text-surface-600-400">
 																			- {safeTranslate(val.legal_basis)}
 																		</span>
 																	{/if}
@@ -637,6 +744,11 @@
 																	{@const [securityObjectiveName, securityObjectiveValue] =
 																		Object.entries(val)[0]}
 																	{safeTranslate(securityObjectiveName).toUpperCase()}: {securityObjectiveValue}
+																{:else if key === 'choices_definition'}
+																	<span class="font-mono text-xs bg-surface-200-800 px-1 rounded"
+																		>{val.ref_id}</span
+																	>
+																	- {val.name}
 																{:else if val.str && val.id && key !== 'qualifications' && key !== 'relationship' && key !== 'nature'}
 																	{@const itemHref = `/${
 																		data.model?.foreignKeyFields?.find((item) => item.field === key)
@@ -657,7 +769,7 @@
 																{:else if val.str}
 																	{safeTranslate(val.str)}
 																{:else}
-																	{value}
+																	{safeTranslate(val)}
 																{/if}
 															</li>
 														{/each}
@@ -700,7 +812,7 @@
 												<li class="fa-solid fa-flag text-blue-500"></li>
 												{m.p3()}
 											{:else if value === 'P4'}
-												<li class="fa-solid fa-flag text-gray-500"></li>
+												<li class="fa-solid fa-flag text-surface-600-400"></li>
 												{m.p4()}
 											{:else if key === 'icon'}
 												<i class="text-lg fa {data.data.icon_fa_class}"></i>
@@ -711,11 +823,15 @@
 												>
 											{:else if ISO_8601_REGEX.test(value) && dateFieldsToFormat.includes(key)}
 												{formatDateOrDateTime(value, getLocale())}
-											{:else if key === 'description' || key === 'observation' || key === 'annotation' || key === 'justification'}
+											{:else if markdownFieldSet.has(key)}
 												<MarkdownRenderer content={value} />
 											{:else if typeof value === 'boolean'}
 												{@const bd = booleanDisplay(value, key, data.urlModel)}
 												<i class="{bd.icon} {bd.colorClass}"></i>
+											{:else if translatedValueFieldSet.has(key)}
+												{safeTranslate(value)}
+											{:else if key === 'roc_calculation_explanation'}
+												{safeTranslate(value.key, formatRosiExplanationParams(value.params))}
 											{:else if !['name', 'ref_id'].includes(key) && m[toCamelCase(value.str || value.name)]}
 												{safeTranslate((value.str || value.name) ?? value)}
 											{:else}
@@ -744,7 +860,7 @@
 		{#if orderedEntries().filter( ([key, _]) => (fields.length > 0 ? fields.includes(key) : true && !exclude.includes(key)) ).length > MAX_ROWS}
 			<button
 				onclick={() => (expandedTable = !expandedTable)}
-				class="m-5 text-blue-800"
+				class="m-5 text-primary-800-200"
 				aria-expanded={expandedTable}
 			>
 				<i class="{expandedTable ? 'fas fa-chevron-up' : 'fas fa-chevron-down'} mr-3"></i>
@@ -834,7 +950,7 @@
 
 				{#if data.urlModel === 'applied-controls'}
 					<button
-						class="btn text-gray-100 bg-linear-to-l from-sky-500 to-green-600"
+						class="btn text-white bg-linear-to-l from-sky-500 to-green-600"
 						onclick={(_) => modalDuplicateForm(m.duplicateAppliedControl)}
 						data-testid="duplicate-button"
 					>
@@ -844,7 +960,7 @@
 				{/if}
 				{#if data.urlModel === 'organisation-objectives'}
 					<button
-						class="btn text-gray-100 bg-linear-to-l from-sky-500 to-green-600"
+						class="btn text-white bg-linear-to-l from-sky-500 to-green-600"
 						onclick={(_) => modalDuplicateForm(m.duplicateOrganisationObjective)}
 						data-testid="duplicate-button"
 					>
@@ -853,13 +969,40 @@
 					>
 				{/if}
 			{/if}
+			{#if showRelations}
+				<button
+					type="button"
+					class="btn h-fit text-white bg-linear-to-l from-violet-500 to-indigo-600"
+					data-testid="relations-button"
+					onclick={() => (relationsOpen = true)}
+				>
+					<i class="fa-solid fa-circle-nodes mr-2"></i>{m.relationsGraph()}
+				</button>
+			{/if}
 			{@render actions?.()}
+			{#if data.urlModel === 'quick-forms'}
+				<!-- Answering a form is the only way to see what its conditions and outcomes
+				     actually do; the same preview serves drafts in the builder. -->
+				<a
+					class="btn preset-filled-primary-500 h-fit"
+					href={`/quick-forms/${data.data?.id}/preview`}
+				>
+					<i class="fa-solid fa-eye mr-2"></i>{m.preview()}
+				</a>
+			{/if}
+			<AuditTrailButton model={data.urlModel} objectId={data.data?.id} folderId={objectDomain} />
 		</div>
 	</div>
 </div>
 
+<CustomFieldsDisplay
+	urlModel={data.urlModel}
+	folderId={data.data?.folder?.id ?? data.data?.folder}
+	values={data.data?.custom_fields}
+/>
+
 {#if relatedModels.length > 0 && displayModelTable}
-	<div class="card shadow-lg mt-8 bg-white px-2 py-6">
+	<div class="card shadow-lg mt-8 bg-surface-50-950 px-2 py-6">
 		<Tabs
 			value={group}
 			onValueChange={(e) => (group = e.value)}
@@ -871,7 +1014,7 @@
 					<Tabs.Trigger
 						value={urlmodel}
 						class="justify-between w-full rounded-md px-3 py-2 transition-colors
-			       aria-[selected=true]:!bg-gray-200
+			       aria-[selected=true]:!bg-surface-200-800
 			       "
 						data-testid="tabs-control"
 					>
@@ -879,7 +1022,7 @@
 						{#if model.count !== undefined && model.count > 0}
 							<span
 								class="ml-2 rounded-full px-2 py-0.5 text-xs
-						   preset-tonal-secondary text-gray-700"
+						   preset-tonal-secondary text-surface-700-300"
 							>
 								{model.count}
 							</span>
@@ -889,101 +1032,126 @@
 			</Tabs.List>
 			{#each relatedModels as [urlmodel, model]}
 				<Tabs.Content value={urlmodel} class="flex-1 min-w-0">
-					{#key urlmodel}
-						{@const field = data.model.reverseForeignKeyFields.find(
-							(item) => item.urlModel === urlmodel
-						)}
-						{@const fieldsToUse =
-							field?.tableFields ||
-							getListViewFields({
-								key: urlmodel,
-								featureFlags: page.data?.featureflags
-							}).body.filter((v) => v !== field.field)}
-						{#if model.table}
-							<ModelTable
-								baseEndpoint={getReverseForeignKeyEndpoint({
-									parentModel: data.model,
-									targetUrlModel: urlmodel,
-									field: field.field,
-									id: data.data.id,
-									endpointUrl: field.endpointUrl
-								})}
-								source={model.table}
-								disableCreate={disableCreate || model.disableCreate}
-								disableEdit={disableEdit || model.disableEdit}
-								disableDelete={disableDelete || model.disableDelete}
-								deleteForm={model.deleteForm}
-								URLModel={urlmodel}
-								expectedCount={getExpectedCount(urlmodel, field)}
-								fields={fieldsToUse}
-								defaultFilters={field.defaultFilters || {}}
-							>
-								{#snippet addButton()}
-									{#if canEditObject && field?.addExisting}
-										<span class="inline-flex overflow-hidden rounded-md border bg-white shadow-xs">
-											<button
-												class="inline-block p-3 btn-mini-secondary w-12 focus:relative"
-												data-testid="select-existing-button"
-												title={safeTranslate(field.addExisting.label ?? 'selectExisting')}
-												onclick={() => modalSelectExisting(field)}
-											>
-												<i class="fa-solid fa-hand-pointer"></i>
-											</button>
-										</span>
-										{#if field?.batchCreate}
+					{#if visitedTabs.has(urlmodel)}
+						{#key urlmodel}
+							{@const field = data.model.reverseForeignKeyFields.find(
+								(item) => item.urlModel === urlmodel
+							)}
+							{@const fieldsToUse =
+								field?.tableFields ||
+								getListViewFields({
+									key: urlmodel,
+									featureFlags: page.data?.featureflags
+								}).body.filter((v) => v !== field.field)}
+							{#if model.table}
+								<ModelTable
+									baseEndpoint={getReverseForeignKeyEndpoint({
+										parentModel: data.model,
+										targetUrlModel: urlmodel,
+										field: field.field,
+										id: data.data.id,
+										endpointUrl: field.endpointUrl
+									})}
+									source={model.table}
+									disableCreate={disableCreate || model.disableCreate}
+									disableEdit={disableEdit || model.disableEdit || Boolean(data.data.is_locked)}
+									disableDelete={disableDelete ||
+										model.disableDelete ||
+										Boolean(data.data.is_locked)}
+									deleteForm={model.deleteForm}
+									URLModel={urlmodel}
+									expectedCount={getExpectedCount(urlmodel, field)}
+									columnSelector={field?.columnSelector}
+									columnStateKey={`${data.urlModel}:${urlmodel}`}
+									fields={fieldsToUse}
+									defaultFilters={field.defaultFilters || {}}
+									extraBatchActions={tableBatchActions(field)}
+								>
+									{#snippet addButton()}
+										{#if data.data.is_locked}
+											<!-- Locked parent: no add affordances, matching the hidden remove selection. -->
+										{:else if canEditObject && field?.addExisting}
 											<span
-												class="inline-flex overflow-hidden rounded-md border bg-white shadow-xs"
+												class="inline-flex overflow-hidden rounded-md border bg-surface-50-950 shadow-xs"
 											>
 												<button
 													class="inline-block p-3 btn-mini-secondary w-12 focus:relative"
-													data-testid="batch-create-button"
-													title={safeTranslate(field.batchCreate.label ?? 'batchCreate')}
-													onclick={() => modalBatchCreate(field, data.data.id)}
+													data-testid="select-existing-button"
+													title={safeTranslate(field.addExisting.label ?? 'selectExisting')}
+													onclick={() => modalSelectExisting(field)}
 												>
-													<i class="fa-solid fa-layer-group"></i>
+													<i class="fa-solid fa-hand-pointer"></i>
 												</button>
 											</span>
-										{/if}
-										<span class="inline-flex overflow-hidden rounded-md border bg-white shadow-xs">
+											{#if field?.batchCreate}
+												<span
+													class="inline-flex overflow-hidden rounded-md border bg-surface-50-950 shadow-xs"
+												>
+													<button
+														class="inline-block p-3 btn-mini-secondary w-12 focus:relative"
+														data-testid="batch-create-button"
+														title={safeTranslate(field.batchCreate.label ?? 'batchCreate')}
+														onclick={() => modalBatchCreate(field, data.data.id)}
+													>
+														<i class="fa-solid fa-layer-group"></i>
+													</button>
+												</span>
+											{/if}
+											<span
+												class="inline-flex overflow-hidden rounded-md border bg-surface-50-950 shadow-xs"
+											>
+												<button
+													class="inline-block border-e p-3 btn-mini-primary w-12 focus:relative"
+													data-testid="add-button"
+													title={safeTranslate('add-' + model.info.localName)}
+													onclick={(_) => modalCreateForm(model)}
+												>
+													<i class="fa-solid fa-file-circle-plus"></i>
+												</button>
+											</span>
+										{:else}
+											{#if field?.batchCreate}
+												<span
+													class="inline-flex overflow-hidden rounded-md border bg-surface-50-950 shadow-xs"
+												>
+													<button
+														class="inline-block p-3 btn-mini-secondary w-12 focus:relative"
+														data-testid="batch-create-button"
+														title={safeTranslate(field.batchCreate.label ?? 'batchCreate')}
+														onclick={() => modalBatchCreate(field, data.data.id)}
+													>
+														<i class="fa-solid fa-layer-group"></i>
+													</button>
+												</span>
+											{/if}
 											<button
-												class="inline-block border-e p-3 btn-mini-primary w-12 focus:relative"
+												class="btn preset-filled-primary-500 self-end my-auto"
 												data-testid="add-button"
-												title={safeTranslate('add-' + model.info.localName)}
 												onclick={(_) => modalCreateForm(model)}
+												><i class="fa-solid fa-plus mr-2 lowercase"></i>{safeTranslate(
+													'add-' + model.info.localName
+												)}</button
 											>
-												<i class="fa-solid fa-file-circle-plus"></i>
-											</button>
-										</span>
-									{:else}
-										{#if field?.batchCreate}
-											<span
-												class="inline-flex overflow-hidden rounded-md border bg-white shadow-xs"
-											>
-												<button
-													class="inline-block p-3 btn-mini-secondary w-12 focus:relative"
-													data-testid="batch-create-button"
-													title={safeTranslate(field.batchCreate.label ?? 'batchCreate')}
-													onclick={() => modalBatchCreate(field, data.data.id)}
-												>
-													<i class="fa-solid fa-layer-group"></i>
-												</button>
-											</span>
 										{/if}
-										<button
-											class="btn preset-filled-primary-500 self-end my-auto"
-											data-testid="add-button"
-											onclick={(_) => modalCreateForm(model)}
-											><i class="fa-solid fa-plus mr-2 lowercase"></i>{safeTranslate(
-												'add-' + model.info.localName
-											)}</button
-										>
-									{/if}
-								{/snippet}
-							</ModelTable>
-						{/if}
-					{/key}
+									{/snippet}
+								</ModelTable>
+							{/if}
+						{/key}
+					{/if}
 				</Tabs.Content>
 			{/each}
 		</Tabs>
 	</div>
+{/if}
+
+{#if showRelations}
+	{#await import('$lib/components/RelationsGraph/RelationsDrawer.svelte') then { default: RelationsDrawer }}
+		<RelationsDrawer
+			open={relationsOpen}
+			urlModel={data.urlModel}
+			id={data.data.id}
+			name={data.data.name ?? data.data.str ?? ''}
+			onClose={() => (relationsOpen = false)}
+		/>
+	{/await}
 {/if}

@@ -31,6 +31,7 @@ def _make_engine(**overrides) -> MappingEngine:
     engine.framework_mappings = defaultdict(list)
     engine.frameworks = {}
     engine.direct_mappings = set()
+    engine.own_scales = {}
     engine.fields_to_map = [
         "result",
         "status",
@@ -515,6 +516,79 @@ class TestBestMappingInferences:
         assert "urn:req:B1" in src_ras
         assert src_ras["urn:req:B1"]["used_mapping_set"]["urn"] == "urn:rms:BC"
 
+    def test_multi_hop_coverage_is_weakest_link(self):
+        """Coverage along a path is weakest-link: an origin requirement is only
+        'full' to the final target if EVERY hop is full (equal/superset).
+
+        A1 --equal--> B1 --intersect--> C1  =>  A1 partial to C1
+        The intermediate B1 keeps its own (partial) coverage for the B→C hop.
+        """
+        rms_ab = _rms(
+            source_framework_urn="urn:fw:A",
+            target_framework_urn="urn:fw:B",
+            requirement_mappings=[
+                {
+                    "source_requirement_urn": "urn:req:A1",
+                    "target_requirement_urn": "urn:req:B1",
+                    "relationship": "equal",
+                }
+            ],
+            urn="urn:rms:AB",
+            name="A to B",
+        )
+        rms_bc = _rms(
+            source_framework_urn="urn:fw:B",
+            target_framework_urn="urn:fw:C",
+            requirement_mappings=[
+                {
+                    "source_requirement_urn": "urn:req:B1",
+                    "target_requirement_urn": "urn:req:C1",
+                    "relationship": "intersect",
+                }
+            ],
+            urn="urn:rms:BC",
+            name="B to C",
+        )
+
+        engine = self._build_engine_with_rms([rms_ab, rms_bc])
+        engine.frameworks = {
+            "urn:fw:A": {"min_score": 0, "max_score": 100},
+            "urn:fw:B": {"min_score": 0, "max_score": 100},
+            "urn:fw:C": {"min_score": 0, "max_score": 100},
+        }
+
+        source = _source_audit(
+            {
+                "urn:req:A1": {
+                    "result": "compliant",
+                    "status": "done",
+                    "score": 90,
+                    "is_scored": True,
+                    "observation": "OK",
+                    "documentation_score": 0,
+                    "applied_controls": [],
+                    "security_exceptions": [],
+                    "evidences": [],
+                    "name": "RA from A",
+                    "id": "ra-a1-id",
+                    "source_framework": {"id": "fw-a-id", "name": "Framework A"},
+                }
+            }
+        )
+
+        inferences, best_path = engine.best_mapping_inferences(
+            source, "urn:fw:A", "urn:fw:C"
+        )
+
+        assert best_path == ["urn:fw:A", "urn:fw:B", "urn:fw:C"]
+        src_ras = inferences["requirement_assessments"]["urn:req:C1"][
+            "mapping_inference"
+        ]["source_requirement_assessments"]
+        # Origin A1: full first hop degraded to partial by the intersect second hop.
+        assert src_ras["urn:req:A1"]["coverage"] == "partial"
+        # Intermediate B1: its own B→C hop is intersect → partial.
+        assert src_ras["urn:req:B1"]["coverage"] == "partial"
+
     # T9: indirect path found when no direct path exists
     def test_indirect_path_when_no_direct(self):
         # No direct A→D, only A→C→D
@@ -583,3 +657,103 @@ class TestBestMappingInferences:
         assert best_path == ["urn:fw:A", "urn:fw:C", "urn:fw:D"]
         assert "urn:req:D1" in inferences["requirement_assessments"]
         assert "urn:req:D2" in inferences["requirement_assessments"]
+
+
+# ---------------------------------------------------------------------------
+# Target audit range — an audit can have its own scale, unlike its framework
+# ---------------------------------------------------------------------------
+
+
+class TestTargetAuditRange:
+    def _mapped(self, engine, target_range=None, score=80):
+        src_ra = {
+            "result": "compliant",
+            "status": "done",
+            "score": score,
+            "is_scored": True,
+            "documentation_score": 60,
+            "applied_controls": [],
+            "security_exceptions": [],
+            "evidences": [],
+            "name": "RA-src",
+            "id": "ra-src-id",
+            "source_framework": {"id": "fw-a-id", "name": "Framework A"},
+        }
+        rms = _rms(
+            requirement_mappings=[
+                {
+                    "source_requirement_urn": "urn:req:A1",
+                    "target_requirement_urn": "urn:req:B1",
+                    "relationship": "equal",
+                }
+            ]
+        )
+        result = engine.map_audit_results(
+            _source_audit({"urn:req:A1": src_ra}),
+            rms,
+            hop_index=1,
+            path=["urn:fw:A", "urn:fw:B"],
+            target_range=target_range,
+        )
+        return result["requirement_assessments"]["urn:req:B1"]
+
+    def test_target_audit_range_rescales_scores_despite_matching_framework(self):
+        engine = _make_engine(
+            frameworks={
+                "urn:fw:A": {"min_score": 0, "max_score": 100},
+                "urn:fw:B": {"min_score": 0, "max_score": 100},
+            }
+        )
+        target_ra = self._mapped(engine, target_range=(1, 5))
+        assert target_ra["result"] == "compliant"
+        assert target_ra["score"] == 4
+        assert target_ra["documentation_score"] == 3
+
+    def test_target_audit_range_allows_scores_despite_framework(self):
+        engine = _make_engine(
+            frameworks={
+                "urn:fw:A": {"min_score": 0, "max_score": 100},
+                "urn:fw:B": {"min_score": 1, "max_score": 5},
+            }
+        )
+        assert self._mapped(engine, target_range=(0, 100))["score"] == 80
+
+    def test_best_inferences_applies_range_on_final_hop(self):
+        engine = _make_engine(
+            frameworks={
+                "urn:fw:A": {"min_score": 0, "max_score": 100},
+                "urn:fw:B": {"min_score": 0, "max_score": 100},
+            }
+        )
+        rms = _rms(
+            requirement_mappings=[
+                {
+                    "source_requirement_urn": "urn:req:A1",
+                    "target_requirement_urn": "urn:req:B1",
+                    "relationship": "equal",
+                }
+            ]
+        )
+        engine.all_paths_between = lambda *_args, **_kw: [["urn:fw:A", "urn:fw:B"]]
+        engine.get_rms = lambda _pair: rms
+        source = _source_audit(
+            {
+                "urn:req:A1": {
+                    "result": "compliant",
+                    "score": 80,
+                    "is_scored": True,
+                    "applied_controls": [],
+                    "security_exceptions": [],
+                    "evidences": [],
+                    "name": "RA",
+                    "id": "ra",
+                    "source_framework": {"id": "fw-a-id", "name": "A"},
+                }
+            }
+        )
+        rescaled, _ = engine.best_mapping_inferences(
+            source, "urn:fw:A", "urn:fw:B", target_range=(1, 5)
+        )
+        assert rescaled["requirement_assessments"]["urn:req:B1"]["score"] == 4
+        allowed, _ = engine.best_mapping_inferences(source, "urn:fw:A", "urn:fw:B")
+        assert allowed["requirement_assessments"]["urn:req:B1"]["score"] == 80
